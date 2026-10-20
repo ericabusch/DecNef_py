@@ -93,13 +93,51 @@ https://deep-mi.org/FastSurfer/stable/overview/OUTPUT_FILES.html
 https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/AnatomicalROI/FreeSurferColorLUT
 
 
+Installation (development)
+--------------------------
+
+The repo is a Python package (distribution name "decnef", flat layout, import
+names unchanged). Only editable installs are supported for now: several modules
+locate data/, decoders/, PyHySCO-main/, librtp and settings files relative to
+their own location in the repo. Python >= 3.10 is required.
+
+With conda (recommended; environment name "decnef", conda-forge only):
+
+    conda env create -f environment.yml
+    conda activate decnef
+    pip install -e . --no-deps
+
+"--no-deps" keeps the packages conda installed; do not pip-install anything
+conda already provides. environment.yml installs the core dependencies and
+pytest. Optional extras are installed with pip:
+
+    pip install -e ".[task]"          # psychopy, pyglet, pyyaml: task displays
+    pip install -e ".[analysis]"      # scikit-learn, h5py: offline analysis helpers
+
+With pip or uv instead of conda (dependencies come from PyPI):
+
+    pip install -e ".[dev]"           # or: uv pip install -e ".[dev]"
+    pip install -e ".[dev,task,analysis]"
+
+Run the tests from the repo root with "pytest tests/".
+
+torch: every GPU code path falls back to CPU, so the CPU build is enough to
+develop and test. On the real-time machine install the CUDA build matching
+its driver (conda-forge: add "cuda-version=<X.Y>" to environment.yml; pip: the
+matching torch wheel).
+
+External tools (not Python packages; must be on PATH, see "Environments"):
+ANTs, FSL, FreeSurfer (mri_synthstrip, mri_synthmorph, mri_binarize),
+FastSurfer (its own conda environment, GPU), dcm2niix, AFNI (closed-loop T2
+pipeline), SPM/MATLAB (closed-loop T2 pipeline only).
+
 Environments
 ------------
 
 We assume two conda environments:
 
-1) rt_pipe
-   - Python 3.9
+1) rt_pipe (or "decnef", see Installation above)
+   - Python 3.10 or newer
    - ANTs (antsRegistration, antsApplyTransforms, ComposeMultiTransform)
    - FSL (fslmaths, flirt, fslcpgeom)
    - FreeSurfer (mri_binarize, mri_synthstrip, mri_synthmorph)
@@ -299,8 +337,9 @@ It is not used in realtime.
 Contact / Notes
 ---------------
 
-- If ANTs fails with a Python version error, make sure rt_pipe is Python 3.9,
-  not 3.10 (ANTs does not support 3.10 in your current build).
+- ANTs is called as a command-line tool, so the Python version of the pipeline
+  environment does not affect it. The pipeline code itself requires Python
+  >= 3.10 (older notes said 3.9; that no longer works).
 - If FastSurfer fails, check CUDA visibility and that you can run
   "run_fastsurfer.sh" inside the fastsurfer environment.
 - The AP/PA naming in your current folders is flipped ("AP" == down, "PA" == up),

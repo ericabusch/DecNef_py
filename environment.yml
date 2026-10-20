@@ -1,0 +1,34 @@
+# Development environment for DecNef_py.
+#
+#   conda env create -f environment.yml
+#   conda activate decnef
+#   pip install -e . --no-deps        # editable install of this repo; --no-deps keeps conda's packages
+#
+# Everything here is also declared in pyproject.toml (keep the two in sync).
+# Versions are lower bounds; a lock file comes later.
+name: decnef
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10          # code needs >=3.10 (runtime `X | None` annotations); psychopy supports <=3.10
+  # core
+  - numpy>=1.24
+  - scipy>=1.10
+  - nibabel>=5.0
+  - nilearn>=0.10
+  - pytorch>=2.0         # CPU build by default. On the real-time (CUDA) machine add a line
+  #                        `- cuda-version=12.x` (exact version to be confirmed) so conda-forge
+  #                        selects the CUDA build; or install the matching torch wheel with pip.
+  - watchdog>=3.0
+  - six>=1.16
+  - pyqt>=5.15           # PyQt5 (conda-forge name: pyqt)
+  - pyserial>=3.5
+  - pandas>=2.0
+  - matplotlib>=3.7
+  # dev
+  - pytest>=7
+  # optional extras are not installed here:
+  #   pip install -e ".[task]"      psychopy + pyglet + pyyaml (task displays; conda-forge's psychopy is stale)
+  #   pip install -e ".[analysis]"  scikit-learn + h5py
+  - pip
+  - pip: []
