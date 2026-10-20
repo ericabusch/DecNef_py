@@ -72,7 +72,7 @@ with start_session(SessionConfig(settings, sub="00086", day="3", run="4")) as se
 folder at the TR and runs the pipeline headless; `decnef compare` diffs the
 resulting CSVs against a reference produced by the original scripts
 (`replay_run.py --driver legacy` on branch `cleanup/01b-session-api`). Numeric
-outputs must be identical; see `docs/architecture.md` "Replay".
+outputs must be identical; the step-by-step recipe is `docs/replay_check.md`.
 
 ## What is not in the package (yet)
 
