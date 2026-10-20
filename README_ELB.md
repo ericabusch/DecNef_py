@@ -95,6 +95,16 @@ are not import-tested. In the layout phase they move to a backup folder
 
 ## Phase 1b: session API
 
+> **Direction change (2026-10-20):** phases 1 and 1b were done "upstream-mergeable"
+> (every quirk preserved, old names re-exported, legacy metadata forms kept).
+> From here on the goal is a **new, lighter, documented package that does the
+> same thing** (same numerics, same inputs/outputs) **without the untidy bits**:
+> no compatibility shims, no hardcoded lab paths or default decoders, one
+> convention for scores/metadata/settings, study code out. Branch `cleanup/01b`
+> stays as the last compatible step and as the reference for the replay check;
+> the clean package is built next to it (`src/decnef/`), module by module, with
+> the replay comparison as the proof of equivalence.
+
 Goal: DecNef_py provides the real-time machinery through a small public API;
 the display and trial structure belong to whoever writes the launcher
 (eventually my study repo). Pipeline numerics unchanged; no files moved.
