@@ -10,7 +10,8 @@ The phase plan is in `CLAUDE.md`.
 
 | phase | branch | status |
 |---|---|---|
-| 1. Packaging (`pyproject.toml`, `environment.yml`, editable install, tests) | `cleanup/01-packaging` | in progress |
+| 1. Packaging (`pyproject.toml`, `environment.yml`, editable install, tests) | `cleanup/01-packaging` | done, PR pending |
+| 1b. Session API (`rt_session.py`; launchers own only the display) | `cleanup/01b-session-api` (stacked on 01) | done, PR pending |
 | 2. Data hygiene (participant data, non-fixture decoders) | – | not started |
 | 3. Configuration (default config, no `/home/sin` paths, personal settings out) | – | not started |
 | 4. Vendored code (PyHySCO as a dependency, `librtp` build step, licenses) | – | not started |
@@ -92,6 +93,76 @@ are not import-tested. In the layout phase they move to a backup folder
 - `tests/`: no `conftest.py`; bare `pytest tests/` only works after the editable
   install (or `python -m pytest`).
 
+## Phase 1b: session API
+
+Goal: DecNef_py provides the real-time machinery through a small public API;
+the display and trial structure belong to whoever writes the launcher
+(eventually my study repo). Pipeline numerics unchanged; no files moved.
+Full description: `docs/session_api.md`.
+
+### What was added
+
+- `rt_session.py`: `SessionConfig` (sub/day/run, roots, settings file +
+  overrides, decoder, physio, QC viewer, stages, launcher metadata, extra
+  processes), `ScoreEvent` (one fixed shape for every queue message; wire
+  format stays a dict), `StageSchedule` (generic trial-stage labels written to
+  `session_metadata["stages"]`), `PhysioConfig`, `ProcessSpec` (generic hook
+  for extra processes such as the PCA scorer), `start_session()` /
+  `prepare_session()` and the `Session` object (`scores()`, `poll()`, `stop()`,
+  context manager; ordered cooperative shutdown with terminate/kill fallback;
+  `atexit`).
+- `rt_pipeline.py` (three small edits): `run_rt_pipeline(..., stop_event=None)`
+  exits its poll loop when asked so its own cleanup runs; queue payloads carry
+  `kind`; `ScoreEventTracker` reads the generic `stages` schema and keeps the
+  legacy `fixation_display` / `psychopy.script` forms (tests prove identical
+  labels).
+- `rt_nf_events_parallel.py`, `rt_psychopy_parallel.py`: ported; reference
+  launchers. The display runs in the main process and talks to the session
+  only through `ScoreEvent`s; `q` (or Escape) ends the run cleanly. The PCA
+  scorer attaches via `ProcessSpec`.
+- `replay_run.py` + `compare_scores.py`: exact-match replay harness (lab
+  machine; needs `dcm2niix`, a recorded run, the same GPU for both runs).
+- Tests: `tests/test_rt_session.py` (fake spawned processes: order, end/error,
+  stop, no orphans incl. a daemon grandchild, extra-process hook, physio,
+  cleanup on display exception), `tests/test_score_event_tracker.py`,
+  `tests/test_nf_events_launcher.py`, `tests/test_psychopy_launcher.py`
+  (fake psychopy). 73 -> 97 tests.
+
+### Behavior preserved on purpose (quirks, documented rather than fixed)
+
+- NF-events: `--skip-first-trs` is display-side only (not sent to the
+  pipeline); `reg_ready` missing counts as *not* ready (psychopy/robot/
+  brainpong: counts as ready).
+- psychopy launcher: TR hardcoded to 1.4 s in `acquisition_speed_rt.csv`.
+- `_plot_qc` reads top-level `voxel_norm_ref_volumes` / `pre_trial_scans`
+  that nothing writes (exclusion always 0).
+- Intended change: the PCA scorer now gets a 5 s grace period after its stop
+  event before `terminate()` (it was terminated immediately), so its own QC
+  plot may complete; the parent re-plot is unchanged.
+
+### Still coupling core to study code (for later phases)
+
+- Default NSF decoder paths (`rt_pipeline.resolve_decoder_template`,
+  `run_preproc.py`, `fmri_rt_preproc/config.py`); `/home/sin`, `/SSD2`
+  argparse defaults (phase 3); lab IP in `biopac_receiver.py`.
+- PCA path couples indirectly: `enable_scoring=False`, `analysis_space`
+  override, the PCA reference image passed as `decoder_template` (used as the
+  resampling reference); `rs_pca_runtime` layout conventions.
+- `psychopy.script == "rt_nf_events_parallel.py"` kept for backward
+  compatibility; new runs also write `stages`.
+- `rt_robot_parallel.py`, `rt_brainpong_parallel.py`, `rs_realtime_parallel.py`,
+  `rs_pca_score_all_rois.py` still own their process code (functionally
+  unchanged in this phase).
+
+### Porting the remaining launchers
+
+| launcher | what it would take |
+|---|---|
+| `rt_robot_parallel.py` | same shape as psychopy (identical helpers and teardown): `SessionConfig` + `ProcessSpec` for PCA; display takes `session`; `q` key. Low risk; left for the study-specific move. |
+| `rt_brainpong_parallel.py` | settings come from the BrainPong JSON through `setattr` (no `update()` validation): switching to the session applies `RegressorSettings.update()` to `TR` / `analysis_space`, which could reject or coerce values -> verify with the lab's config first. `--no-pipeline` / simulation paths bypass the session. |
+| `rs_realtime_parallel.py` | the display is a *child* and the main process runs preprocessing subprocesses, waits on the pipeline with an unbounded `join()`, then runs `--pca-prep`. Needs: fixation display moved to the main process (or kept as a `ProcessSpec`), a stop condition (max_trs / `q`) feeding `session.stop()`, `fixation_display` metadata -> `StageSchedule(cycle=[("rest", 1)])`. Also fixes today's skipped `--pca-prep` on Ctrl-C. |
+| `rs_pca_score_all_rois.py` | imports eight helpers from `rs_realtime_parallel` (spawn children re-import it); its all-ROI scorer is a natural `ProcessSpec`; its `finally` never stops the pipeline today. Port together with RS. |
+
 ## Test record
 
 | run | command | result |
@@ -99,6 +170,7 @@ are not import-tested. In the layout phase they move to a backup folder
 | baseline (before packaging, env `decnef-baseline`) | `pytest tests/` | 6 collection errors (top-level modules not importable) |
 | baseline | `python -m pytest tests/` | 73 passed |
 | after packaging (env `decnef` from `environment.yml`, `pip install -e . --no-deps`) | `pytest tests/` and `python -m pytest tests/` | 73 passed, per-test identical to baseline |
+| phase 1b (`cleanup/01b-session-api`) | `pytest tests/` | 97 passed (73 unchanged + 24 new); replay exact-match pending on the lab machine |
 
 Verification details (phase 1): `pip check` clean; the pip step added only
 `decnef` to the conda env; setuptools used its import-finder editable mode
@@ -109,3 +181,21 @@ outside the repo, all 14 listed modules and all `fmri_rt_preproc.*`,
 `biopac_rt.*` modules import; the excluded study/one-off scripts are not
 importable from outside the repo by design (they still run from the repo
 root with `python <script>.py`).
+
+
+
+## Thinking about the independence of this package
+my-decnef-study  ──imports──▶  decnef (DecNef_py)
+  task/display code              real-time engine, preprocessing,
+  launcher for my paradigm       scoring, physio, QC
+  decoder training/analysis
+  my settings
+
+The key change: who owns the launcher
+
+Right now the launcher scripts (rt_*_parallel.py) sit inside DecNef_py and combine two jobs:
+
+starting the pipeline process, the physio listener and the QC viewer
+running a specific task display
+
+For a clean split, DecNef_py should provide the first job as a function, and your repo should own the second. Roughly: 
