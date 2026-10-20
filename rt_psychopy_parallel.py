@@ -18,9 +18,23 @@ import numpy as np
 
 from rt_global_settings import load_regressor_settings
 import rs_pca_runtime as pca_rt
+from rt_session import (
+    PhysioConfig,
+    ProcessSpec,
+    SessionConfig,
+    merge_session_metadata as _merge_session_metadata,  # kept under the old name for callers
+    prepare_session,
+    start_session,
+)
+from rt_session import _physio_main as _run_biopac_listener  # noqa: F401  (old name, same function)
 
 
 log = logging.getLogger(__name__)
+
+# Reference launcher on the session API (docs/session_api.md): this file owns the
+# score-plot display and the condition bookkeeping; rt_session owns the pipeline,
+# physio and PCA-scorer processes, metadata and shutdown. 's' starts on the
+# scanner trigger, 'q' or Escape ends the run cleanly.
 
 
 @dataclass(frozen=True)
@@ -223,20 +237,6 @@ def _append_acquisition_speed(csv_path: Path, row: dict) -> None:
             writer.writeheader()
         writer.writerow(row)
 
-def _merge_session_metadata(run_dir: Path, payload: dict) -> None:
-    metadata_path = run_dir / "session_metadata.json"
-    data = {}
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            data = {}
-    data.update(payload)
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-
 def _load_reg_ready_map(run_dir: Path) -> Optional[dict[int, bool]]:
     reg_path = run_dir / "regression_status_rt.csv"
     if not reg_path.exists():
@@ -341,19 +341,8 @@ def _plot_qc(run_dir: Path, prefer_reg_ready: bool = True) -> None:
     plt.close(fig)
 
 
-def _run_biopac_listener(config: "BiopacReceiverConfig", stop_event: mp.Event) -> None:
-    from biopac_rt.biopac_receiver import BiopacRetroTSReceiver
-
-    receiver = BiopacRetroTSReceiver(config)
-    receiver.start()
-    try:
-        while not stop_event.is_set():
-            time.sleep(0.1)
-    finally:
-        receiver.stop()
-
-
 def _run_pipeline_with_settings(cfg: "RTSessionConfig", score_queue: Queue, settings: dict) -> None:
+    """Old process target, kept for callers; new code goes through rt_session."""
     from rt_pipeline import REGRESSOR_SETTINGS, run_rt_pipeline
 
     REGRESSOR_SETTINGS.update(settings)
@@ -411,12 +400,14 @@ def _build_presentation_window(visual, color):
 
 
 def run_psychopy_presentation(
-    score_queue: Queue,
+    session,
     max_points: int,
     condition: Condition,
     condition_scores_path: Path,
     max_trs: Optional[int],
 ) -> None:
+    """The score-plot display. `session` is an rt_session.Session (anything with a
+    `poll() -> list[ScoreEvent]`); runs in the calling (main) process."""
     from psychopy import core, event, visual
 
     background_color = [-0.004, -0.004, -0.004]
@@ -499,7 +490,7 @@ def run_psychopy_presentation(
         if "s" in keys:
             first_trigger_timestamp = time.time()
             waiting = False
-        if "escape" in keys:
+        if "escape" in keys or "q" in keys:
             win.close()
             return
         core.wait(0.02)
@@ -536,43 +527,44 @@ def run_psychopy_presentation(
 
     while True:
         updated = False
-        try:
-            while True:
-                message = score_queue.get_nowait()
-                vol_idx = int(message.get("volume_idx", 0))
-                if vol_idx:
-                    seen_vols.add(vol_idx)
-                if first_trigger_timestamp is not None and vol_idx > 0:
-                    estimated_trigger_timestamp = first_trigger_timestamp + ((vol_idx - 1) * 1.4)
-                    watchdog_timestamp = message.get("watchdog_timestamp")
-                    analysis_timestamp = message.get("analysis_timestamp", message.get("timestamp"))
-                    if watchdog_timestamp is not None and analysis_timestamp is not None:
-                        _append_acquisition_speed(
-                            acquisition_speed_path,
-                            {
-                                "volume_idx": vol_idx,
-                                "estimated_trigger_timestamp": f"{estimated_trigger_timestamp:.6f}",
-                                "watchdog_timestamp": f"{float(watchdog_timestamp):.6f}",
-                                "analysis_timestamp": f"{float(analysis_timestamp):.6f}",
-                                "trigger_to_watchdog_s": (
-                                    f"{(float(watchdog_timestamp) - estimated_trigger_timestamp):.6f}"
-                                ),
-                                "watchdog_to_analysis_s": (
-                                    f"{(float(analysis_timestamp) - float(watchdog_timestamp)):.6f}"
-                                ),
-                            },
-                        )
+        for ev in session.poll():
+            if ev.kind == "error":
+                log.warning("Session error event: %s", ev.meta.get("error"))
+            vol_idx = int(ev.volume_idx or 0)
+            if vol_idx:
+                seen_vols.add(vol_idx)
+            if first_trigger_timestamp is not None and vol_idx > 0:
+                # NOTE: 1.4 s is a hardcoded TR here (pre-existing; the NF-events launcher uses the settings TR)
+                estimated_trigger_timestamp = first_trigger_timestamp + ((vol_idx - 1) * 1.4)
+                watchdog_timestamp = ev.watchdog_timestamp
+                analysis_timestamp = ev.analysis_timestamp if ev.analysis_timestamp is not None else ev.timestamp
+                if watchdog_timestamp is not None and analysis_timestamp is not None:
+                    _append_acquisition_speed(
+                        acquisition_speed_path,
+                        {
+                            "volume_idx": vol_idx,
+                            "estimated_trigger_timestamp": f"{estimated_trigger_timestamp:.6f}",
+                            "watchdog_timestamp": f"{float(watchdog_timestamp):.6f}",
+                            "analysis_timestamp": f"{float(analysis_timestamp):.6f}",
+                            "trigger_to_watchdog_s": (
+                                f"{(float(watchdog_timestamp) - estimated_trigger_timestamp):.6f}"
+                            ),
+                            "watchdog_to_analysis_s": (
+                                f"{(float(analysis_timestamp) - float(watchdog_timestamp)):.6f}"
+                            ),
+                        },
+                    )
 
-                has_score = "score_raw" in message
-                if has_score and message.get("reg_ready", True):
-                    reg_ready_seen = True
-                    scores.append(float(message["score_raw"]))
-                    _append_condition_score(condition_scores_path, message, condition)
-                    updated = True
-                elif has_score:
-                    updated = True
-        except Empty:
-            pass
+            # a decoder score (pipeline) or a PCA feedback score (scorer process); a
+            # missing reg_ready counts as ready, as before
+            has_score = ev.score_raw is not None or "score_raw" in ev.meta
+            if has_score and (ev.reg_ready is None or ev.reg_ready):
+                reg_ready_seen = True
+                scores.append(float(ev.score_raw))
+                _append_condition_score(condition_scores_path, ev.to_message(), condition)
+                updated = True
+            elif has_score:
+                updated = True
 
         if max_trs is not None and len(seen_vols) >= max_trs:
             break
@@ -591,7 +583,8 @@ def run_psychopy_presentation(
             win.flip()
             needs_redraw = False
 
-        if "escape" in event.getKeys():
+        keys = event.getKeys()
+        if "escape" in keys or "q" in keys:
             break
 
         core.wait(0.02)
@@ -920,7 +913,7 @@ def main() -> None:
         help="Optional JSON file with global runtime settings (TR, censor thresholds, BIOPAC defaults, etc.).",
     )
     args = parser.parse_args()
-    from rt_pipeline import RTSessionConfig, REGRESSOR_SETTINGS
+    from rt_pipeline import REGRESSOR_SETTINGS
 
     if args.settings_file:
         loaded = load_regressor_settings(args.settings_file)
@@ -928,7 +921,6 @@ def main() -> None:
     max_trs = args.max_trs
     if max_trs is None and args.duration_min is not None:
         max_trs = int(round((float(args.duration_min) * 60.0) / float(REGRESSOR_SETTINGS.TR)))
-    from biopac_rt.biopac_receiver import BiopacReceiverConfig
     base_data = Path(args.base_data)
     subject_root = base_data / f"sub-{args.sub}"
     pca_reference_image = None
@@ -944,42 +936,46 @@ def main() -> None:
         if use_pca
         else Path(args.decoder_template) if args.decoder_template else None
     )
-    cfg = RTSessionConfig(
-        subject=args.sub,
+    cfg = SessionConfig(
+        sub=args.sub,
         day=args.day,
         run=args.run,
-        incoming_root=Path(args.incoming_root),
         base_data=base_data,
+        incoming_root=Path(args.incoming_root),
+        settings_file=Path(args.settings_file) if args.settings_file else None,
         decoder_template=cfg_decoder_template,
         decoder_roi_txt=None if use_pca else Path(args.decoder_roi_txt) if args.decoder_roi_txt else None,
         reference_score_run=None if use_pca else args.reference_score_run,
         enable_scoring=not use_pca,
         ap_block=args.ap_block,
         pa_block=args.pa_block,
+        physio=PhysioConfig(
+            enable=args.biopac_enable,
+            host=args.biopac_host,
+            port=args.biopac_port,
+            timeout=args.biopac_timeout,
+            phys_reg=args.biopac_phys_reg,
+            handshake=args.biopac_handshake,
+            start_online_only=args.biopac_start_online,
+            mode=args.biopac_mode,
+            file=Path(args.biopac_file) if args.biopac_file else None,
+            poll_interval=args.biopac_poll,
+            listener=args.biopac_listener,
+        ),
+        queue_size=100,
     )
+    # the run directory (created by the pipeline config, as before)
+    from rt_session import build_rt_config
+
+    run_dir = build_rt_config(cfg).rt_work_dir
 
     if use_pca and args.reference_score_run:
         log.info("PCA score source enabled: ignoring --rs=%s", args.reference_score_run)
 
-    settings_payload = vars(REGRESSOR_SETTINGS).copy()
-    settings_payload.update(
-        {
-            "enable_biopac_physio": args.biopac_enable,
-            "biopac_host": args.biopac_host,
-            "biopac_port": args.biopac_port,
-            "biopac_timeout": args.biopac_timeout,
-            "biopac_phys_reg": args.biopac_phys_reg,
-            "biopac_handshake": args.biopac_handshake,
-            "biopac_start_online_only": args.biopac_start_online,
-            "biopac_mode": args.biopac_mode,
-            "biopac_file": Path(args.biopac_file) if args.biopac_file else None,
-            "biopac_poll_interval": args.biopac_poll,
-        }
-    )
     if args.rt_max_scan_length is not None:
-        settings_payload["rt_max_scan_length"] = max(1, int(args.rt_max_scan_length))
+        cfg.settings_overrides["rt_max_scan_length"] = max(1, int(args.rt_max_scan_length))
     if use_pca:
-        settings_payload["analysis_space"] = args.pca_space
+        cfg.settings_overrides["analysis_space"] = args.pca_space
     pca_volume_kind = args.pca_volume_kind
     if use_pca and pca_volume_kind is None:
         pca_volume_kind = "reg" if args.pca_space == "epi" else args.pca_space
@@ -1001,13 +997,12 @@ def main() -> None:
             symbol_seed = int(args.sub)
         except ValueError:
             symbol_seed = None
-    run_dir = cfg.rt_work_dir
     pca_day = None
     pca_run = None
     pca_root = None
     if use_pca:
         default_private_key, default_public_schedule = pca_rt.default_condition_paths(
-            cfg.subject_root
+            subject_root
         )
         private_key_path = args.condition_private_key or default_private_key
         public_schedule_path = args.condition_public_schedule or default_public_schedule
@@ -1065,7 +1060,7 @@ def main() -> None:
     else:
         symbols = _shuffle_symbols(symbols, symbol_seed)
         conditions = _build_conditions(roi_labels, direction_labels, symbols)
-        schedule_path = cfg.subject_root / "condition_schedule.json"
+        schedule_path = subject_root / "condition_schedule.json"
         schedule = _load_or_create_schedule(
             schedule_path,
             conditions,
@@ -1124,15 +1119,14 @@ def main() -> None:
             }
         )
 
-    _merge_session_metadata(
-        run_dir,
+    cfg.metadata = (
         {
             "psychopy": {
                 "max_points": args.max_points,
                 "max_trs": max_trs,
                 "ap_block": args.ap_block,
                 "pa_block": args.pa_block,
-                "fmap_dir": str(cfg.fmap_dir),
+                "fmap_dir": str(build_rt_config(cfg).fmap_dir),
                 "duration_min": args.duration_min,
                 "roi_labels": roi_labels,
                 "direction_labels": direction_labels,
@@ -1174,96 +1168,50 @@ def main() -> None:
                 if use_pca
                 else None,
             }
-        },
+        }
     )
 
-    ctx = mp.get_context("spawn")
-    score_queue = ctx.Queue(maxsize=100)
-    biopac_process = None
-    biopac_stop = None
-    if args.biopac_listener:
-        if not args.biopac_enable:
-            raise ValueError("--biopac-listener requires --biopac-enable")
-        if args.biopac_mode != "file":
-            raise ValueError("--biopac-listener requires --biopac-mode=file")
-        biopac_output = settings_payload["biopac_file"] or (run_dir / "biopac_regressors_rx.csv")
-        settings_payload["biopac_file"] = biopac_output
-        biopac_stop = ctx.Event()
-        expected_regressors = {
-            "RICOR8": 8,
-            "RVT5": 5,
-            "RVT+RICOR13": 13,
-        }.get(args.biopac_phys_reg, 8)
-        biopac_cfg = BiopacReceiverConfig(
-            host=args.biopac_host,
-            port=args.biopac_port,
-            timeout=args.biopac_timeout,
-            expected_regressors=expected_regressors,
-            handshake_tr=REGRESSOR_SETTINGS.TR if args.biopac_handshake else None,
-            subject=args.sub,
-            day=args.day,
-            run=args.run,
-            output_path=biopac_output,
-        )
-        biopac_process = ctx.Process(
-            target=_run_biopac_listener,
-            args=(biopac_cfg, biopac_stop),
-        )
-        biopac_process.start()
-
-    pipeline_process = ctx.Process(
-        target=_run_pipeline_with_settings,
-        args=(cfg, score_queue, settings_payload),
-    )
-    pipeline_process.start()
-    pca_stop = ctx.Event()
-    pca_process = None
     if use_pca:
-        pca_process = ctx.Process(
-            target=pca_rt.run_realtime_pca_scorer,
-            kwargs={
-                "run_dir": run_dir,
-                "pca_root": pca_root,
-                "condition": condition,
-                "score_queue": score_queue,
-                "stop_event": pca_stop,
-                "reference_stats_path": reference_stats_path,
-                "reference_stats": reference_stats,
-                "volume_kind": pca_volume_kind,
-                "normalization": args.pca_normalization,
-                "score_metric": args.pca_score_metric,
-                "target_pc": args.pca_target_pc,
-                "top_pcs": args.pca_top_pcs,
-                "top_pc_variance": args.pca_top_pc_variance,
-                "max_trs": max_trs,
-                "poll_interval": args.pca_poll_interval,
-                "qc_plot_path": run_dir / "qc_pca_scores_motion.png",
-                "qc_update_every": 5,
-            },
+        # the PCA scorer attaches through the generic extra-process hook: the session
+        # gives it the score queue and a stop event, starts it after the pipeline and
+        # stops it (5 s grace, then terminate) before the pipeline
+        cfg.extra_processes.append(
+            ProcessSpec(
+                "pca_scorer",
+                pca_rt.run_realtime_pca_scorer,
+                kwargs={
+                    "run_dir": run_dir,
+                    "pca_root": pca_root,
+                    "condition": condition,
+                    "reference_stats_path": reference_stats_path,
+                    "reference_stats": reference_stats,
+                    "volume_kind": pca_volume_kind,
+                    "normalization": args.pca_normalization,
+                    "score_metric": args.pca_score_metric,
+                    "target_pc": args.pca_target_pc,
+                    "top_pcs": args.pca_top_pcs,
+                    "top_pc_variance": args.pca_top_pc_variance,
+                    "max_trs": max_trs,
+                    "poll_interval": args.pca_poll_interval,
+                    "qc_plot_path": run_dir / "qc_pca_scores_motion.png",
+                    "qc_update_every": 5,
+                },
+                pass_queue="score_queue",
+                pass_stop_event="stop_event",
+            )
         )
-        pca_process.start()
 
+    prepared = prepare_session(cfg)
     try:
-        run_psychopy_presentation(
-            score_queue,
-            args.max_points,
-            condition,
-            condition_scores_path,
-            max_trs,
-        )
+        with start_session(cfg, prepared) as session:
+            run_psychopy_presentation(
+                session,
+                args.max_points,
+                condition,
+                condition_scores_path,
+                max_trs,
+            )
     finally:
-        pca_stop.set()
-        if pca_process is not None:
-            if pca_process.is_alive():
-                pca_process.terminate()
-            pca_process.join(timeout=5)
-        if pipeline_process.is_alive():
-            pipeline_process.terminate()
-        pipeline_process.join(timeout=5)
-        if biopac_stop is not None:
-            biopac_stop.set()
-        if biopac_process is not None:
-            biopac_process.join(timeout=5)
         if use_pca:
             pca_rt.plot_pca_scores_motion(
                 run_dir=run_dir,
