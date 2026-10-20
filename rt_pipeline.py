@@ -92,7 +92,13 @@ def log_step(step: str, vol: int, extra: str = "", start_t=None):
 
 
 class ScoreEventTracker:
-    """Infer per-volume event/stage labels from session_metadata.json."""
+    """Infer per-volume event/stage labels from session_metadata.json.
+
+    Generic form: a "stages" dict written by rt_session.StageSchedule (schema in
+    docs/session_api.md). Legacy forms, kept so existing runs and launchers keep
+    their labels: "fixation_display" (rest runs) and "psychopy" with
+    script == "rt_nf_events_parallel.py" (the NF events task).
+    """
 
     def __init__(self, run_dir: Path):
         self.run_dir = run_dir
@@ -101,6 +107,7 @@ class ScoreEventTracker:
         self._baseline_trs = 0
         self._n_trials = 0
         self._stage_defs: list[tuple[str, int]] = []
+        self._stages: Optional[dict] = None
         self._load_metadata()
 
     def _load_metadata(self) -> None:
@@ -111,6 +118,12 @@ class ScoreEventTracker:
             with open(metadata_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
         except (OSError, json.JSONDecodeError):
+            return
+
+        stages = metadata.get("stages")
+        if isinstance(stages, dict) and isinstance(stages.get("cycle", []), list):
+            self._mode = "stages"
+            self._stages = stages
             return
 
         if isinstance(metadata.get("fixation_display"), dict):
@@ -141,6 +154,10 @@ class ScoreEventTracker:
     def for_volume(self, volume_idx: int) -> Optional[str]:
         if self._mode is None:
             return None
+        if self._mode == "stages":
+            from rt_session import label_for_volume
+
+            return label_for_volume(self._stages, volume_idx)
         if volume_idx <= self._skip_first_trs:
             return "background"
 
@@ -2031,6 +2048,7 @@ def process_volume(
             try:
                 handler.score_queue.put_nowait(
                     {
+                        "kind": "tick",
                         "volume_idx": volume_idx,
                         "watchdog_timestamp": volume_timestamp,
                     }
@@ -2086,6 +2104,7 @@ def process_volume(
         if handler.score_queue is not None:
             try:
                 payload = {
+                    "kind": "score",
                     "volume_idx": volume_idx,
                     "timestamp": timestamp,
                     "analysis_timestamp": analysis_timestamp,
@@ -2162,7 +2181,10 @@ def validate_run_provenance(cfg):
 
 # ---------- Main ----------
 
-def run_rt_pipeline(cfg: RTSessionConfig, score_queue: Optional[object] = None):
+def run_rt_pipeline(cfg: RTSessionConfig, score_queue: Optional[object] = None, stop_event: Optional[object] = None):
+    """Run the real-time pipeline until Ctrl-C or, when `stop_event` (a multiprocessing
+    Event, see rt_session) is given, until it is set; either way the handler's
+    cleanup runs. With stop_event=None behavior is unchanged."""
     analysis_space = str(REGRESSOR_SETTINGS.analysis_space).lower()
     if analysis_space not in {"epi", "t1", "mni"}:
         raise ValueError(
@@ -2212,10 +2234,12 @@ def run_rt_pipeline(cfg: RTSessionConfig, score_queue: Optional[object] = None):
     print("[RT] Switching to online mode.")
     try:
         event_handler.enable_online_mode()
-        while True:
+        while stop_event is None or not stop_event.is_set():
             while event_handler.submit_pending():
                 continue
             time.sleep(0.2)
+        print("[RT] Stop requested; shutting down.")
+        observer.stop()
     except KeyboardInterrupt:
         observer.stop()
     finally:
