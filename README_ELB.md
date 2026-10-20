@@ -224,8 +224,12 @@ plugin; removing the old tree, `data/`, `decoders/`; CI/release.
 round-trip, smoothing numerics, engine ordering/timeout, stages + EPI-space
 `process_volume` end to end on synthetic data, prerequisites/provenance,
 session lifecycle, example launcher headless). Every `decnef.*` module
-imports from outside the repo. **Exact-match replay on the lab machine still
-to do** (`docs/architecture.md` "Replay") — it gates deleting the old tree.
+imports from outside the repo. `tests/decnef/test_equivalence_synthetic.py`
+runs the old `rt_pipeline` and the new `decnef.pipeline` on a synthetic
+subject (real PyHySCO / RtpVolreg / RtpRegress, EPI space) and asserts
+identical CSVs — **passes**. The exact-match replay on real data on the lab
+machine (DICOM conversion, T1/MNI warp, CUDA) is still to do
+(`docs/replay_check.md`); it gates deleting the old tree.
 
 ## Test record
 
@@ -235,7 +239,7 @@ to do** (`docs/architecture.md` "Replay") — it gates deleting the old tree.
 | baseline | `python -m pytest tests/` | 73 passed |
 | after packaging (env `decnef` from `environment.yml`, `pip install -e . --no-deps`) | `pytest tests/` and `python -m pytest tests/` | 73 passed, per-test identical to baseline |
 | phase 1b (`cleanup/01b-session-api`) | `pytest tests/` | 97 passed (73 unchanged + 24 new); replay exact-match pending on the lab machine |
-| phase 2 (`cleanup/02-decnef-core`) | `pytest tests/` | 139 passed (97 old-tree + 42 `tests/decnef`); replay exact-match pending on the lab machine |
+| phase 2 (`cleanup/02-decnef-core`) | `pytest tests/` | 140 passed (97 old-tree + 43 `tests/decnef`, incl. the synthetic old-vs-new equivalence test: IDENTICAL); real-data replay pending on the lab machine |
 
 Verification details (phase 1): `pip check` clean; the pip step added only
 `decnef` to the conda env; setuptools used its import-finder editable mode

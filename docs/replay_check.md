@@ -4,7 +4,22 @@ The clean package (`src/decnef/`) must produce the same numbers as the
 original scripts before the old tree is deleted. This page is the recipe for
 that check, followed by the list of what moves or goes once it passes.
 
-## The replay check
+## Synthetic check (no scanner, runs anywhere)
+
+`tests/decnef/test_equivalence_synthetic.py` builds a synthetic subject
+(reference EPI, masks, fieldmap calibration with a small field, an EPI-grid
+decoder, 10 drifting/noisy volumes), runs the **old** `rt_pipeline` and the
+**new** `decnef.pipeline` on the same volumes and asserts the output CSVs are
+identical. It exercises the real PyHySCO unwarp, RtpVolreg (librtp),
+RtpRegress with WM/Vent regressors, FD/DVARS censoring and the decoder;
+`dcm2niix` and ANTs are not needed (raw volumes are pre-converted,
+`analysis_space=epi`). It passes on the development Mac (~5 s). On macOS the
+committed `librtp.dylib` needs `brew install libxt`; the test skips when
+librtp cannot be loaded. This covers the EPI-space path; the lab-machine
+replay below additionally covers the real DICOM conversion, the T1/MNI warp
+(ANTs or the GPU resampler) and the CUDA device.
+
+## The replay check (real data, lab machine)
 
 Everything runs on the lab machine: it needs `dcm2niix` on `PATH`, the GPU
 (both runs on the same device), and the subject/day's offline preparation

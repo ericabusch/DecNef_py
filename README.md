@@ -35,6 +35,7 @@ pip install -e ".[task]"               # PsychoPy, for launchers / examples
 pytest tests/decnef                    # the package's tests (tests/ also still covers the old scripts)
 ```
 
+On macOS the committed `librtp.dylib` (AFNI volreg) needs `brew install libxt`.
 External tools on `PATH`: `dcm2niix`, ANTs (`antsApplyTransforms`), and for
 the offline preparation FSL, FreeSurfer (SynthStrip/SynthMorph), FastSurfer.
 `torch` falls back to CPU everywhere; the real-time machine should have the
