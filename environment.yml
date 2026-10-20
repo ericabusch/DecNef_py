@@ -25,6 +25,7 @@ dependencies:
   - pyserial>=3.5
   - pandas>=2.0
   - matplotlib>=3.7
+  - pyyaml>=6
   # dev
   - pytest>=7
   # optional extras are not installed here:

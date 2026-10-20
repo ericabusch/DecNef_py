@@ -24,54 +24,30 @@ dependencies = [
     "pyserial>=3.5",
     "pandas>=2.0",
     "matplotlib>=3.7",
+    "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
-# PsychoPy task displays (rt_psychopy_parallel, rt_nf_events_parallel, rs_realtime_parallel)
-task = ["psychopy>=2023.2", "pyglet", "pyyaml>=6"]
+# PsychoPy displays (decnef.display, examples/)
+task = ["psychopy>=2023.2", "pyglet"]
 # offline analysis helpers (roi_rs_pca_decoder_prep uses sklearn if present; compare_decoders uses h5py)
 analysis = ["scikit-learn>=1.3", "h5py>=3"]
 dev = ["pytest>=7"]
 
-# Flat layout: modules and packages are listed explicitly so setuptools does not
-# auto-discover the many top-level files, tests/, data/, decoders/, docs/ or the
-# vendored fmri_rt_preproc/PyHySCO-main/. Only editable installs are supported
-# for now (modules resolve data/, decoders/, PyHySCO-main/ and settings files
-# relative to __file__ in the repo).
 [tool.setuptools]
+# src layout: the new package. The old flat modules (rt_pipeline.py, ...) stay in
+# the repo as the reference implementation and run from the repo root, but are
+# not part of the distribution any more.
+package-dir = {"" = "src"}
+packages = ["decnef", "decnef.rtpspy"]
 include-package-data = false
-# Core modules only. Study-specific tasks and one-off analysis/plot scripts stay in
-# the repo but are not part of the distribution (see README_ELB.md for the list).
-py-modules = [
-    "rt_pipeline",
-    "rt_session",
-    "run_preproc",
-    "rt_global_settings",
-    "motion_fd",
-    "decoder_score",
-    "volume_streamer",
-    "gpu_ants_like_resampler",
-    "rs_realtime_parallel",
-    "rt_psychopy_parallel",
-    "rt_nf_events_parallel",
-    # resting-state PCA decoder path: to become an optional plugin (phase 5);
-    # installed for now because rs_realtime_parallel, rt_psychopy_parallel and
-    # the tests import it unconditionally
-    "rs_pca_runtime",
-    "rs_pca_score_all_rois",
-    "roi_rs_pca_decoder_prep",
-    "init_pca_conditions",
-]
-packages = [
-    "fmri_rt_preproc",
-    "fmri_rt_preproc.RTPSpy_tools",
-    "fmri_rt_preproc.RTPSpy_tools.lib_RetroTS",
-    "biopac_rt",
-]
 
 [tool.setuptools.package-data]
-# native motion-correction library loaded by rtp_volreg.py via ctypes
-"fmri_rt_preproc.RTPSpy_tools" = ["librtp.so", "librtp.dylib"]
+"decnef.rtpspy" = ["librtp.so", "librtp.dylib"]
+
+[project.scripts]
+decnef = "decnef.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
