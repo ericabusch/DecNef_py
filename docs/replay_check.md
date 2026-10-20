@@ -6,18 +6,34 @@ that check, followed by the list of what moves or goes once it passes.
 
 ## Synthetic check (no scanner, runs anywhere)
 
-`tests/decnef/test_equivalence_synthetic.py` builds a synthetic subject
-(reference EPI, masks, fieldmap calibration with a small field, an EPI-grid
-decoder, 10 drifting/noisy volumes), runs the **old** `rt_pipeline` and the
-**new** `decnef.pipeline` on the same volumes and asserts the output CSVs are
-identical. It exercises the real PyHySCO unwarp, RtpVolreg (librtp),
-RtpRegress with WM/Vent regressors, FD/DVARS censoring and the decoder;
-`dcm2niix` and ANTs are not needed (raw volumes are pre-converted,
-`analysis_space=epi`). It passes on the development Mac (~5 s). On macOS the
-committed `librtp.dylib` needs `brew install libxt`; the test skips when
-librtp cannot be loaded. This covers the EPI-space path; the lab-machine
-replay below additionally covers the real DICOM conversion, the T1/MNI warp
-(ANTs or the GPU resampler) and the CUDA device.
+`tests/decnef/test_equivalence_synthetic.py` (helpers in `tests/decnef/synth.py`)
+builds a synthetic subject (reference EPI, masks, fieldmap calibration with a
+small field, decoders, 20 drifting/noisy volumes), runs the **old**
+`rt_pipeline` and the **new** `decnef.pipeline` on the same volumes and
+asserts the output CSVs are identical, for each of:
+
+- the baseline EPI-space run (regression active from volume 12 on)
+- final masking + smoothing (`smoothing_fwhm_mm=4`)
+- regression off (voxel normalisation)
+- `enable_original_score`
+- z-scoring against a reference run (`scores_z.csv`)
+- physio regressors in file mode (RICOR8 from a CSV, one volume missing -> zero-filled)
+- the MNI-space warp through the GPU resampler on CPU (synthetic sampling grid)
+
+`tests/decnef/test_pipeline_behaviour.py` covers what has no old counterpart:
+online ingest through the watcher with out-of-order arrivals, a corrupt
+volume reported as `kind="error"` while the run continues (no substituted
+zeros), the full `start_session` path with stage labels and metadata,
+migration of the lab's real settings files, and the QC viewer process.
+
+What is real in these: PyHySCO unwarp, RtpVolreg (librtp), RtpRegress,
+FD/DVARS censoring, smoothing, the resampler, the decoder. What is not:
+`dcm2niix` (raw volumes are pre-converted; a stub satisfies the prerequisite
+check) and ANTs (`analysis_space=epi`, or the cached GPU grid). ~1 minute on
+the development Mac. On macOS the committed `librtp.dylib` needs
+`brew install libxt`; the tests skip when librtp cannot be loaded. The
+lab-machine replay below additionally covers the real DICOM conversion, the
+ANTs warp and the CUDA device.
 
 ## The replay check (real data, lab machine)
 

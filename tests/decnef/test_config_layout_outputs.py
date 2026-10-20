@@ -61,8 +61,9 @@ def test_migrate_legacy_settings_covers_every_regressor_setting(tmp_path):
     assert s.pipeline.TR == old["TR"] and s.pipeline.censor.dvars.warmup == old["dvars_warmup"]
     assert s.qc.stream_kind == "mc"   # old 'unwarped' alias
     assert s.physio.enable == old["enable_biopac_physio"]
+    assert C.migrate_legacy({"made_up": 1})["pipeline"] == {}          # ignored, like the old loader did
     with pytest.raises(C.ConfigError, match="no equivalent"):
-        C.migrate_legacy({"made_up": 1})
+        C.migrate_legacy({"made_up": 1}, unknown="error")
 
 
 # ----------------------------------------------------------------------------- layout

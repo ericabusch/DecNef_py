@@ -442,15 +442,24 @@ _LEGACY_MAP = {
 _LEGACY_DROPPED = {"pipeline_engine"}   # only the ordered engine exists now
 
 
-def migrate_legacy(old: dict, *, base_data=None, incoming_root=None, decoder_template=None) -> dict:
+def migrate_legacy(old: dict, *, base_data=None, incoming_root=None, decoder_template=None, unknown: str = "skip") -> dict:
     """Translate an old rt_settings.json dict into the new layout (as a plain dict,
-    ready for `from_dict` after the required paths are filled in). Unknown keys raise."""
+    ready for `from_dict` after the required paths are filled in).
+    Keys the old code never read ("_comment_*", keys absent from RegressorSettings)
+    are skipped with a warning, as the old loader silently ignored them; pass
+    unknown="error" to make them an error instead."""
+    import logging
+
     out: dict = {"paths": {}, "pipeline": {}, "decoder": {}, "physio": {}, "qc": {}}
+    skipped = []
     for key, value in old.items():
         if key in _LEGACY_DROPPED or key.startswith("_"):   # "_comment_*" keys in the old files
             continue
         if key not in _LEGACY_MAP:
-            raise ConfigError(f"legacy key {key!r} has no equivalent")
+            if unknown == "error":
+                raise ConfigError(f"legacy key {key!r} has no equivalent")
+            skipped.append(key)
+            continue
         node = out
         parts = _LEGACY_MAP[key].split(".")
         for part in parts[:-1]:
@@ -464,4 +473,6 @@ def migrate_legacy(old: dict, *, base_data=None, incoming_root=None, decoder_tem
         out["paths"]["incoming_root"] = str(incoming_root)
     if decoder_template is not None:
         out["decoder"]["template"] = str(decoder_template)
+    if skipped:
+        logging.getLogger(__name__).warning("legacy keys with no equivalent were skipped (the old loader ignored them too): %s", skipped)
     return out
