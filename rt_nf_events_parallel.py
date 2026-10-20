@@ -14,9 +14,24 @@ import numpy as np
 from scipy.stats import norm
 
 from rt_global_settings import load_regressor_settings
+from rt_session import (
+    PhysioConfig,
+    ScoreEvent,
+    SessionConfig,
+    StageSchedule,
+    merge_session_metadata as _merge_session_metadata,  # kept under the old name for callers
+    prepare_session,
+    start_session,
+)
+from rt_session import _physio_main as _run_biopac_listener  # noqa: F401  (old name, same function)
 
 
 log = logging.getLogger(__name__)
+
+# This launcher is a reference example of the session API (docs/session_api.md):
+# it owns the NF-events display and trial structure; rt_session owns the
+# pipeline / physio processes, metadata and shutdown. Press 's' to start on the
+# scanner trigger, 'q' or Escape to end the run cleanly.
 
 # python rt_nf_events_parallel.py \
 #   --sub 00086 \
@@ -37,22 +52,6 @@ log = logging.getLogger(__name__)
 
 
 #
-
-def _merge_session_metadata(run_dir: Path, payload: dict) -> None:
-    metadata_path = run_dir / "session_metadata.json"
-    data = {}
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            data = {}
-    data.update(payload)
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-
-
 
 def _load_reg_ready_map(run_dir: Path) -> Optional[dict[int, bool]]:
     reg_path = run_dir / "regression_status_rt.csv"
@@ -178,19 +177,8 @@ def _append_acquisition_speed(csv_path: Path, row: dict) -> None:
         writer.writerow(row)
 
 
-def _run_biopac_listener(config: "BiopacReceiverConfig", stop_event: mp.Event) -> None:
-    from biopac_rt.biopac_receiver import BiopacRetroTSReceiver
-
-    receiver = BiopacRetroTSReceiver(config)
-    receiver.start()
-    try:
-        while not stop_event.is_set():
-            time.sleep(0.1)
-    finally:
-        receiver.stop()
-
-
 def _run_pipeline_with_settings(cfg: "RTSessionConfig", score_queue: Queue, settings: dict) -> None:
+    """Old process target, kept for callers; new code goes through rt_session."""
     from rt_pipeline import REGRESSOR_SETTINGS, run_rt_pipeline
 
     for key, value in settings.items():
@@ -295,7 +283,7 @@ def _score_to_percentile(score_raw: float, reference_stats: Optional[dict]) -> f
 
 
 def run_nf_events_presentation(
-    score_queue: Queue,
+    session,
     skip_first_trs: int,
     baseline_trs: int,
     n_trials: int,
@@ -309,6 +297,8 @@ def run_nf_events_presentation(
     trial_scores_path: Path,
     reference_stats: Optional[dict] = None,
 ) -> None:
+    """The NF-events display. `session` is an rt_session.Session (anything with a
+    `poll() -> list[ScoreEvent]`); the display runs in the calling (main) process."""
     from psychopy import core, event, visual
 
     stage_sum = iti_trs + cue_trs + scans_trs + delay_trs + feedback_trs
@@ -378,44 +368,39 @@ def run_nf_events_presentation(
 
     def drain_queue() -> None:
         nonlocal max_seen_vol
-        try:
-            while True:
-                message = score_queue.get_nowait()
-                vol_idx = int(message.get("volume_idx", 0) or 0)
-                if vol_idx > 0:
-                    max_seen_vol = max(max_seen_vol, vol_idx)
-                if first_trigger_timestamp is not None and vol_idx > 0:
-                    estimated_trigger_timestamp = first_trigger_timestamp + ((vol_idx - 1) * tr_seconds)
-                    watchdog_timestamp = message.get("watchdog_timestamp")
-                    analysis_timestamp = message.get("analysis_timestamp", message.get("timestamp"))
-                    if watchdog_timestamp is not None and analysis_timestamp is not None:
-                        _append_acquisition_speed(
-                            acquisition_speed_path,
-                            {
-                                "volume_idx": vol_idx,
-                                "estimated_trigger_timestamp": f"{estimated_trigger_timestamp:.6f}",
-                                "watchdog_timestamp": f"{float(watchdog_timestamp):.6f}",
-                                "analysis_timestamp": f"{float(analysis_timestamp):.6f}",
-                                "trigger_to_watchdog_s": f"{(float(watchdog_timestamp) - estimated_trigger_timestamp):.6f}",
-                                "watchdog_to_analysis_s": f"{(float(analysis_timestamp) - float(watchdog_timestamp)):.6f}",
-                            },
-                        )
-                exp_tr = _analysis_tr_for_volume(vol_idx)
-                if exp_tr is None:
-                    continue
+        for ev in session.poll():
+            if ev.kind == "error":
+                log.warning("Session error event: %s", ev.meta.get("error"))
+            vol_idx = int(ev.volume_idx or 0)
+            if vol_idx > 0:
+                max_seen_vol = max(max_seen_vol, vol_idx)
+            if first_trigger_timestamp is not None and vol_idx > 0:
+                estimated_trigger_timestamp = first_trigger_timestamp + ((vol_idx - 1) * tr_seconds)
+                watchdog_timestamp = ev.watchdog_timestamp
+                analysis_timestamp = ev.analysis_timestamp if ev.analysis_timestamp is not None else ev.timestamp
+                if watchdog_timestamp is not None and analysis_timestamp is not None:
+                    _append_acquisition_speed(
+                        acquisition_speed_path,
+                        {
+                            "volume_idx": vol_idx,
+                            "estimated_trigger_timestamp": f"{estimated_trigger_timestamp:.6f}",
+                            "watchdog_timestamp": f"{float(watchdog_timestamp):.6f}",
+                            "analysis_timestamp": f"{float(analysis_timestamp):.6f}",
+                            "trigger_to_watchdog_s": f"{(float(watchdog_timestamp) - estimated_trigger_timestamp):.6f}",
+                            "watchdog_to_analysis_s": f"{(float(analysis_timestamp) - float(watchdog_timestamp)):.6f}",
+                        },
+                    )
+            exp_tr = _analysis_tr_for_volume(vol_idx)
+            if exp_tr is None:
+                continue
 
-                # Baseline TRs are for normalization / denoising warmup and
-                # must never leak into trial-scoring windows.
-                if exp_tr < first_nonbaseline_tr:
-                    continue
-                # Accept only explicitly regressed samples.
-                if bool(message.get("reg_ready", False)) and message.get("score_raw") is not None:
-                    try:
-                        score_by_exp_tr[exp_tr] = float(message["score_raw"])
-                    except (TypeError, ValueError):
-                        continue
-        except Empty:
-            pass
+            # Baseline TRs are for normalization / denoising warmup and
+            # must never leak into trial-scoring windows.
+            if exp_tr < first_nonbaseline_tr:
+                continue
+            # Accept only explicitly regressed samples (a missing reg_ready counts as not ready).
+            if bool(ev.reg_ready) and ev.score_raw is not None:
+                score_by_exp_tr[exp_tr] = float(ev.score_raw)
 
     # Wait for manual trigger.
     while True:
@@ -428,7 +413,7 @@ def run_nf_events_presentation(
         if "s" in keys:
             first_trigger_timestamp = time.time()
             break
-        if "escape" in keys:
+        if "escape" in keys or "q" in keys:
             win.close()
             return
         core.wait(0.02)
@@ -542,7 +527,8 @@ def run_nf_events_presentation(
 
             win.flip()
 
-            if "escape" in event.getKeys():
+            keys = event.getKeys()
+            if "escape" in keys or "q" in keys:
                 win.close()
                 return
 
@@ -679,7 +665,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    from rt_pipeline import RTSessionConfig, REGRESSOR_SETTINGS, load_reference_score_stats
+    from rt_pipeline import REGRESSOR_SETTINGS
 
     if args.settings_file:
         loaded = load_regressor_settings(args.settings_file)
@@ -699,46 +685,53 @@ def main() -> None:
         if getattr(args, name) < 0:
             raise ValueError(f"--{name.replace('_', '-')} must be >= 0")
 
-    from biopac_rt.biopac_receiver import BiopacReceiverConfig
+    run_dir = Path(args.base_data) / f"sub-{args.sub}" / args.day / "func" / args.run
+    trial_scores_path = run_dir / "trial_scores.csv"
+    stage_cycle = [
+        ("iti", args.iti_trs),
+        ("cue", args.cue_trs),
+        ("scans", args.scans_trs),
+        ("delay", args.delay_trs),
+        ("feedback", args.feedback_trs),
+    ]
 
-    cfg = RTSessionConfig(
-        subject=args.sub,
+    cfg = SessionConfig(
+        sub=args.sub,
         day=args.day,
         run=args.run,
-        incoming_root=Path(args.incoming_root),
         base_data=Path(args.base_data),
+        incoming_root=Path(args.incoming_root),
+        settings_file=Path(args.settings_file) if args.settings_file else None,
+        # Baseline TRs define the warmup window for voxel-wise normalization and
+        # denoising startup; keep pipeline normalization in sync with presentation.
+        # (--skip-first-trs is display-side only, as before.)
+        settings_overrides={"voxel_norm_ref_volumes": max(1, baseline_trs)},
         decoder_template=Path(args.decoder_template) if args.decoder_template else None,
         reference_score_run=args.reference_score_run,
         ap_block=args.ap_block,
-        pa_block=args.pa_block
-    )
-
-    cfg.reference_score_stats = load_reference_score_stats(cfg, cfg.reference_score_run)
-
-    settings_payload = vars(REGRESSOR_SETTINGS).copy()
-    # Baseline TRs define the warmup window for voxel-wise normalization and
-    # denoising startup; keep pipeline normalization in sync with presentation.
-    settings_payload["voxel_norm_ref_volumes"] = max(1, baseline_trs)
-    settings_payload.update(
-        {
-            "enable_biopac_physio": args.biopac_enable,
-            "biopac_host": args.biopac_host,
-            "biopac_port": args.biopac_port,
-            "biopac_timeout": args.biopac_timeout,
-            "biopac_phys_reg": args.biopac_phys_reg,
-            "biopac_handshake": args.biopac_handshake,
-            "biopac_start_online_only": args.biopac_start_online,
-            "biopac_mode": args.biopac_mode,
-            "biopac_file": Path(args.biopac_file) if args.biopac_file else None,
-            "biopac_poll_interval": args.biopac_poll,
-        }
-    )
-
-    run_dir = cfg.rt_work_dir
-    trial_scores_path = run_dir / "trial_scores.csv"
-    _merge_session_metadata(
-        run_dir,
-        {
+        pa_block=args.pa_block,
+        physio=PhysioConfig(
+            enable=args.biopac_enable,
+            host=args.biopac_host,
+            port=args.biopac_port,
+            timeout=args.biopac_timeout,
+            phys_reg=args.biopac_phys_reg,
+            handshake=args.biopac_handshake,
+            start_online_only=args.biopac_start_online,
+            mode=args.biopac_mode,
+            file=Path(args.biopac_file) if args.biopac_file else None,
+            poll_interval=args.biopac_poll,
+            listener=args.biopac_listener,
+        ),
+        # generic stage labels for scores.csv / ScoreEvent.stage ...
+        stages=StageSchedule(
+            skip_first_trs=args.skip_first_trs,
+            baseline_trs=baseline_trs,
+            cycle=stage_cycle,
+            n_cycles=args.n_trials,
+        ),
+        # ... and the launcher's own record (the "script" key keeps older readers working)
+        metadata={
             "psychopy": {
                 "script": "rt_nf_events_parallel.py",
                 "n_trials": args.n_trials,
@@ -754,64 +747,29 @@ def main() -> None:
                 "decoder_template": str(args.decoder_template) if args.decoder_template else None,
             }
         },
+        queue_size=200,
     )
 
-    ctx = mp.get_context("spawn")
-    score_queue = ctx.Queue(maxsize=200)
-    biopac_process = None
-    biopac_stop = None
-
-    if args.biopac_listener:
-        if not args.biopac_enable:
-            raise ValueError("--biopac-listener requires --biopac-enable")
-        if args.biopac_mode != "file":
-            raise ValueError("--biopac-listener requires --biopac-mode=file")
-        biopac_output = settings_payload["biopac_file"] or (run_dir / "biopac_regressors_rx.csv")
-        settings_payload["biopac_file"] = biopac_output
-        biopac_stop = ctx.Event()
-        expected_regressors = {"RICOR8": 8, "RVT5": 5, "RVT+RICOR13": 13}.get(args.biopac_phys_reg, 8)
-        biopac_cfg = BiopacReceiverConfig(
-            host=args.biopac_host,
-            port=args.biopac_port,
-            timeout=args.biopac_timeout,
-            expected_regressors=expected_regressors,
-            handshake_tr=REGRESSOR_SETTINGS.TR if args.biopac_handshake else None,
-            subject=args.sub,
-            day=args.day,
-            run=args.run,
-            output_path=biopac_output,
-        )
-        biopac_process = ctx.Process(target=_run_biopac_listener, args=(biopac_cfg, biopac_stop))
-        biopac_process.start()
-
-    pipeline_process = ctx.Process(target=_run_pipeline_with_settings, args=(cfg, score_queue, settings_payload))
-    pipeline_process.start()
-
+    prepared = prepare_session(cfg)
     try:
-        run_nf_events_presentation(
-            score_queue=score_queue,
-            skip_first_trs=args.skip_first_trs,
-            baseline_trs=baseline_trs,
-            n_trials=args.n_trials,
-            iti_trs=args.iti_trs,
-            cue_trs=args.cue_trs,
-            scans_trs=args.scans_trs,
-            delay_trs=args.delay_trs,
-            feedback_trs=args.feedback_trs,
-            score_delay=args.score_delay,
-            tr_seconds=float(REGRESSOR_SETTINGS.TR),
-            trial_scores_path=trial_scores_path,
-            reference_stats=cfg.reference_score_stats,
-        )
+        with start_session(cfg, prepared) as session:
+            run_nf_events_presentation(
+                session=session,
+                skip_first_trs=args.skip_first_trs,
+                baseline_trs=baseline_trs,
+                n_trials=args.n_trials,
+                iti_trs=args.iti_trs,
+                cue_trs=args.cue_trs,
+                scans_trs=args.scans_trs,
+                delay_trs=args.delay_trs,
+                feedback_trs=args.feedback_trs,
+                score_delay=args.score_delay,
+                tr_seconds=prepared["tr"],
+                trial_scores_path=trial_scores_path,
+                reference_stats=prepared["reference_score_stats"],
+            )
     finally:
-        if pipeline_process.is_alive():
-            pipeline_process.terminate()
-        pipeline_process.join(timeout=5)
-        if biopac_stop is not None:
-            biopac_stop.set()
-        if biopac_process is not None:
-            biopac_process.join(timeout=5)
-        _plot_qc(run_dir)
+        _plot_qc(prepared["run_dir"])
 
 
 if __name__ == "__main__":
