@@ -447,7 +447,7 @@ def migrate_legacy(old: dict, *, base_data=None, incoming_root=None, decoder_tem
     ready for `from_dict` after the required paths are filled in). Unknown keys raise."""
     out: dict = {"paths": {}, "pipeline": {}, "decoder": {}, "physio": {}, "qc": {}}
     for key, value in old.items():
-        if key in _LEGACY_DROPPED:
+        if key in _LEGACY_DROPPED or key.startswith("_"):   # "_comment_*" keys in the old files
             continue
         if key not in _LEGACY_MAP:
             raise ConfigError(f"legacy key {key!r} has no equivalent")
