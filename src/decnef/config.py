@@ -152,7 +152,7 @@ class QcConfig:
 
 @dataclass
 class StagesConfig:
-    skip_first_trs: int = 0
+    # volumes <= pipeline.skip_first_trs get pre_label (one setting for pipeline and labels)
     baseline_trs: int = 0
     cycle: list = field(default_factory=list)   # [[name, n_trs], ...]
     n_cycles: Optional[int] = None

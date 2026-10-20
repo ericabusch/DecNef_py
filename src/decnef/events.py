@@ -81,10 +81,10 @@ class StageSchedule:
     post_label: str = "post_task"
 
     @classmethod
-    def from_config(cls, cfg) -> Optional["StageSchedule"]:
+    def from_config(cls, cfg, skip_first_trs: int = 0) -> Optional["StageSchedule"]:
         if cfg is None:
             return None
-        return cls(skip_first_trs=int(cfg.skip_first_trs), baseline_trs=int(cfg.baseline_trs),
+        return cls(skip_first_trs=int(skip_first_trs), baseline_trs=int(cfg.baseline_trs),
                    cycle=[(str(n), int(t)) for n, t in cfg.cycle], n_cycles=cfg.n_cycles,
                    pre_label=cfg.pre_label, baseline_label=cfg.baseline_label, post_label=cfg.post_label)
 
