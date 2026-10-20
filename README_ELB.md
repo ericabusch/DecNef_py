@@ -12,6 +12,7 @@ The phase plan is in `CLAUDE.md`.
 |---|---|---|
 | 1. Packaging (`pyproject.toml`, `environment.yml`, editable install, tests) | `cleanup/01-packaging` | done, PR pending |
 | 1b. Session API (`rt_session.py`; launchers own only the display) | `cleanup/01b-session-api` (stacked on 01) | done, PR pending |
+| 2. Clean package, real-time core (`src/decnef/`) | `cleanup/02-decnef-core` (stacked on 01b) | done locally; replay equivalence pending on the lab machine |
 | 2. Data hygiene (participant data, non-fixture decoders) | – | not started |
 | 3. Configuration (default config, no `/home/sin` paths, personal settings out) | – | not started |
 | 4. Vendored code (PyHySCO as a dependency, `librtp` build step, licenses) | – | not started |
@@ -173,6 +174,59 @@ Full description: `docs/session_api.md`.
 | `rs_realtime_parallel.py` | the display is a *child* and the main process runs preprocessing subprocesses, waits on the pipeline with an unbounded `join()`, then runs `--pca-prep`. Needs: fixation display moved to the main process (or kept as a `ProcessSpec`), a stop condition (max_trs / `q`) feeding `session.stop()`, `fixation_display` metadata -> `StageSchedule(cycle=[("rest", 1)])`. Also fixes today's skipped `--pca-prep` on Ctrl-C. |
 | `rs_pca_score_all_rois.py` | imports eight helpers from `rs_realtime_parallel` (spawn children re-import it); its all-ROI scorer is a natural `ProcessSpec`; its `finally` never stops the pipeline today. Port together with RS. |
 
+## Phase 2: the clean package (`src/decnef/`)
+
+Built next to the old tree (kept as the reference until the replay check
+passes). Algorithms were moved, not rewritten; signatures, names, error
+handling and configuration changed. `README.md`, `docs/config.md`,
+`docs/architecture.md`, `docs/session_api.md` describe the result.
+
+### What moved where
+
+| old | new |
+|---|---|
+| `rt_global_settings.RegressorSettings` + per-launcher argparse + hardcoded defaults | `decnef.config.Settings` from one YAML/JSON (`decnef config migrate` translates old files) |
+| `rt_pipeline.RTSessionConfig` path properties (mkdir on access) | `decnef.layout.RunLayout` (no side effects; `create_run_dirs()`) |
+| `rt_pipeline` CSV writers, `write_session_metadata`, `load_reference_score_stats` | `decnef.outputs` |
+| `decoder_score.DecoderScorer` | `decnef.decoder` (no dead baseline code; grid check) |
+| `rt_session.ScoreEvent/StageSchedule` | `decnef.events` (kind + source mandatory) |
+| `rt_pipeline.parse_dicom_name`, `prepare_volume_input`, `DICOMHandler` (watch half) | `decnef.ingest` |
+| `DICOMHandler` (engine half), `compute_stage`/`commit_stage` | `decnef.engine.OrderedEngine` (legacy engine removed) |
+| `process_volume`, `MotionRegressor`, `RTPStyleVoxelNormalizer`, `compute_dvars`, `robust_z`, `motion_fd` | `decnef.stages` (`RunState` + one function per stage) |
+| `DICOMHandler.__init__`, `run_rt_pipeline`, `validate_run_provenance`, `maybe_init_*` | `decnef.pipeline` (`check_prerequisites`, `build_state`, `run_pipeline`) |
+| `fmri_rt_preproc/{native_fieldmap, analysis_mask, volume_smooth, pyhysco_apply}` | `decnef.{calibration, masks, smoothing, unwarp}` |
+| `gpu_ants_like_resampler`, `volume_streamer` | `decnef.resampler`, `decnef.viewer` |
+| `biopac_rt/biopac_receiver` | `decnef.physio` (no lab IP) |
+| `fmri_rt_preproc/RTPSpy_tools` | `decnef.rtpspy` (PyQt5/pyserial optional, six removed) |
+| `rt_session.Session/start_session` | `decnef.session` |
+| `rt_pipeline.main`, `replay_run.py`, `compare_scores.py` | `decnef.cli` (`decnef run/replay/compare/config`) |
+| `rt_nf_events_parallel.py` display + window helpers | `examples/nf_events_launcher.py` + `decnef.display` |
+
+### Untidy bits removed
+
+No module globals (`REGRESSOR_SETTINGS` gone); no hardcoded paths, lab IP,
+default decoder; no `logging.basicConfig` at import; no `print`; no directory
+creation in path properties; no dead code; no silent fallbacks (a failed
+stage raises -> `kind="error"` on the queue); one `skip_first_trs`; one
+meaning for `score_raw`; `reg_ready` always present on scores; TR only from
+config; stage labels only from `settings.stages`; PyQt5/pyserial optional.
+
+### Still outside the package (next phases)
+
+Offline preparation (`run_preproc.py`, `fmri_rt_preproc/pipeline.py`, surface
+ROIs) -> `decnef.preproc`; PyHySCO as a dependency (currently imported from
+the vendored tree by `decnef.unwarp`); `librtp` build step; the rs_pca
+plugin; removing the old tree, `data/`, `decoders/`; CI/release.
+
+### Verification
+
+`tests/decnef`: 42 tests (config/layout/outputs/decoder/events, physio socket
+round-trip, smoothing numerics, engine ordering/timeout, stages + EPI-space
+`process_volume` end to end on synthetic data, prerequisites/provenance,
+session lifecycle, example launcher headless). Every `decnef.*` module
+imports from outside the repo. **Exact-match replay on the lab machine still
+to do** (`docs/architecture.md` "Replay") — it gates deleting the old tree.
+
 ## Test record
 
 | run | command | result |
@@ -181,6 +235,7 @@ Full description: `docs/session_api.md`.
 | baseline | `python -m pytest tests/` | 73 passed |
 | after packaging (env `decnef` from `environment.yml`, `pip install -e . --no-deps`) | `pytest tests/` and `python -m pytest tests/` | 73 passed, per-test identical to baseline |
 | phase 1b (`cleanup/01b-session-api`) | `pytest tests/` | 97 passed (73 unchanged + 24 new); replay exact-match pending on the lab machine |
+| phase 2 (`cleanup/02-decnef-core`) | `pytest tests/` | 139 passed (97 old-tree + 42 `tests/decnef`); replay exact-match pending on the lab machine |
 
 Verification details (phase 1): `pip check` clean; the pip step added only
 `decnef` to the conda env; setuptools used its import-finder editable mode
