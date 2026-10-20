@@ -149,10 +149,13 @@ class Session:
     def __init__(self, run_dir: Path, pipeline_target: Callable, pipeline_args: tuple = (), *,
                  physio_target: Optional[Callable] = None, physio_args: tuple = (),
                  extra_processes: Optional[list] = None, queue_size: int = 200, stop_timeout_s: float = 10.0,
-                 layout: Optional[RunLayout] = None, settings: Optional[Settings] = None):
+                 layout: Optional[RunLayout] = None, settings: Optional[Settings] = None,
+                 feeder=None, simulation=None):
         self.run_dir = Path(run_dir)
         self.layout = layout
         self.settings = settings
+        self.feeder = feeder                 # simulate.ScannerFeeder (started after the pipeline, stopped first)
+        self.simulation = simulation         # simulate.SimPaths when simulating, else None
         self._ctx = mp.get_context("spawn")
         self.queue = self._ctx.Queue(maxsize=int(queue_size))
         self._pipeline_target, self._pipeline_args = pipeline_target, tuple(pipeline_args)
@@ -192,16 +195,20 @@ class Session:
                 proc.start()
                 self.extra_stops[spec.name] = stop
                 self.extra_processes[spec.name] = proc
+            if self.feeder is not None:
+                self.feeder.start()
         except BaseException:
             self.stop()
             raise
         return self
 
     def stop(self) -> None:
-        """Extras -> pipeline -> physio. Idempotent."""
+        """Feeder -> extras -> pipeline -> physio. Idempotent."""
         if self._stopped or not self._started:
             return
         self._stopped = True
+        if self.feeder is not None:
+            self.feeder.stop()
         for spec in reversed(self._extras):
             self.exit_codes[spec.name] = _stop_process(self.extra_processes.get(spec.name), self.extra_stops.get(spec.name),
                                                        spec.stop_timeout_s, queue=self.queue, name=spec.name)
@@ -256,11 +263,37 @@ class Session:
 
 
 # ----------------------------------------------------------------------------- the real thing
-def start_session(cfg: SessionConfig) -> Session:
-    """Write the launcher's metadata, start physio listener / pipeline / extras."""
+def start_session(cfg: SessionConfig, simulate=None) -> Session:
+    """Write the launcher's metadata, start physio listener / pipeline / extras.
+
+    `simulate=SimulationConfig(...)` (decnef.simulate) runs the same session against a
+    simulation instead of the scanner: level "scores" swaps the pipeline for a fake
+    process that emits ScoreEvents at the TR; level "scanner" feeds synthetic (or
+    recorded) DICOMs through the real pipeline. Everything else -- metadata, physio,
+    extras, shutdown -- is identical, so a launcher's real and dry-run code differ
+    only by this argument. Simulation outputs live under `simulate.out_dir`."""
     from . import outputs
 
-    settings, layout = cfg.settings, cfg.layout
+    settings = cfg.settings
+    layout = cfg.layout if simulate is None else None      # a simulation brings its own paths; no incoming_root needed
+    pipeline_target, pipeline_extra, feeder, sim_paths = _pipeline_main, (), None, None
+    if simulate is not None:
+        from . import simulate as S
+
+        sim_paths = S.resolve_sim_paths(settings, cfg.run, simulate, cfg.ap_block, cfg.pa_block)
+        settings = S.simulation_settings(settings, sim_paths, simulate)
+        layout = sim_paths.layout
+        S.reset_run_dir(sim_paths)
+        if simulate.level == "scanner":
+            if simulate.from_dicoms is not None:
+                S.require_scanner_tools(settings)
+                items = S.recorded_items(simulate.from_dicoms, simulate.source_run, int(cfg.run), simulate.n_volumes or None)
+            else:
+                phantom = S.make_phantom(settings, simulate, sim_paths)
+                items = S.phantom_items(phantom, settings, simulate, int(cfg.run))
+            feeder = S.ScannerFeeder(items, sim_paths.incoming, float(settings.pipeline.TR))
+        else:
+            pipeline_target, pipeline_extra = S.scores_pipeline_main, (simulate.to_dict(),)
     layout.create_run_dirs()
     if cfg.metadata:
         outputs.write_metadata(layout.metadata_json, cfg.metadata)
@@ -276,7 +309,8 @@ def start_session(cfg: SessionConfig) -> Session:
         physio_args = (ReceiverConfig(host=ph.host, port=ph.port, timeout=ph.timeout, expected_regressors=PHYS_REG_COUNTS[ph.phys_reg],
                                       handshake_tr=settings.pipeline.TR if ph.handshake else None, subject=layout.sub,
                                       day=layout.day, run=layout.run, output_path=output),)
-    session = Session(run_dir=layout.run_dir, pipeline_target=_pipeline_main, pipeline_args=(settings.to_dict(), layout),
+    session = Session(run_dir=layout.run_dir, pipeline_target=pipeline_target, pipeline_args=(settings.to_dict(), layout, *pipeline_extra),
                       physio_target=physio_target, physio_args=physio_args or (), extra_processes=cfg.extra_processes,
-                      queue_size=cfg.queue_size, stop_timeout_s=cfg.stop_timeout_s, layout=layout, settings=settings)
+                      queue_size=cfg.queue_size, stop_timeout_s=cfg.stop_timeout_s, layout=layout, settings=settings,
+                      feeder=feeder, simulation=sim_paths)
     return session.start()

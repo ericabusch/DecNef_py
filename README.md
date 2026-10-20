@@ -50,6 +50,8 @@ CUDA build.
 ```bash
 decnef run --config decnef.yaml --sub 00086 --day 3 --run 4 --incoming /path/to/dicoms      # pipeline only
 python examples/nf_events_launcher.py --config decnef.yaml --sub 00086 --day 3 --run 4       # with a display
+python examples/nf_events_launcher.py ... --simulate scanner                                  # no scanner: synthetic DICOMs, real pipeline
+decnef simulate --config decnef.yaml --sub 00 --day 1 --run 4 --level scores                 # headless dry run, no tools
 ```
 
 A launcher is a few lines around `start_session` (`docs/session_api.md`):

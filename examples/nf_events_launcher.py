@@ -3,6 +3,8 @@
 
     python examples/nf_events_launcher.py --config decnef.yaml --sub 00086 --day 3 --run 4 \
         --n-trials 20 --baseline-trs 20 --iti-trs 3 --cue-trs 4 --scans-trs 3 --delay-trs 3 --feedback-trs 3
+    python examples/nf_events_launcher.py ... --simulate scores            # dry run: fake scores at the TR, no tools
+    python examples/nf_events_launcher.py ... --simulate scanner --sim-out /tmp/sim   # synthetic DICOMs through the real pipeline
 
 What this file owns: the trial structure (baseline, then n_trials x
 iti/cue/scans/delay/feedback), the PsychoPy display (fixation during cue, a
@@ -30,6 +32,7 @@ from decnef.config import StagesConfig, load_settings
 from decnef.display import STOP_KEYS, AcquisitionSpeedLog, build_window, pressed, wait_for_start
 from decnef.events import StageSchedule
 from decnef.session import SessionConfig, start_session
+from decnef.simulate import SimulationConfig
 
 log = logging.getLogger("nf_events")
 STAGES = ("iti", "cue", "scans", "delay", "feedback")
@@ -152,6 +155,9 @@ def main() -> None:
     for stage, default in zip(STAGES, (3, 4, 3, 3, 3)):
         p.add_argument(f"--{stage}-trs", type=int, default=default)
     p.add_argument("--score-delay", type=int, default=3, help="TRs after cue onset before the score window starts")
+    p.add_argument("--simulate", choices=["scores", "scanner"], default=None,
+                   help="dry run without a scanner: 'scores' = fake pipeline events, 'scanner' = synthetic DICOMs through the real pipeline")
+    p.add_argument("--sim-out", type=Path, default=None, help="simulation directory (default: fresh temp dir; reused if it exists)")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s")
 
@@ -167,15 +173,22 @@ def main() -> None:
     cfg = SessionConfig(settings, a.sub, a.day, a.run, ap_block=a.ap_block, pa_block=a.pa_block,
                         metadata={"launcher": {"script": Path(__file__).name, "n_trials": a.n_trials, "baseline_trs": baseline,
                                                **{f"{s}_trs": getattr(a, f"{s}_trs") for s in STAGES}, "score_delay": a.score_delay}})
-    trial_scores_path = cfg.layout.run_dir / "trial_scores.csv"
     reference_stats = None
     if settings.decoder.reference_score_run:
         from decnef.outputs import load_reference_score_stats
 
         reference_stats = load_reference_score_stats(cfg.layout.other_run(settings.decoder.reference_score_run).run_dir,
                                                      settings.decoder.reference_score_run)
-    with start_session(cfg) as session:
-        run_display(session, schedule, a.score_delay, settings.pipeline.TR, trial_scores_path, reference_stats)
+    # the only difference between a real run and a dry run: the `simulate` argument
+    simulate = None
+    if a.simulate:
+        n_volumes = settings.pipeline.skip_first_trs + baseline + a.n_trials * sum(getattr(a, f"{s}_trs") for s in STAGES) + 2
+        simulate = SimulationConfig(level=a.simulate, n_volumes=n_volumes, out_dir=a.sim_out, signal_stages=("scans",))
+    with start_session(cfg, simulate=simulate) as session:
+        if simulate is not None:
+            log.info("simulation outputs: %s", session.simulation.out_dir)
+        # session.run_dir is the real run folder, or the simulation's run folder when simulating
+        run_display(session, schedule, a.score_delay, settings.pipeline.TR, session.run_dir / "trial_scores.csv", reference_stats)
 
 
 if __name__ == "__main__":

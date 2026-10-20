@@ -26,6 +26,8 @@ dependencies:
   - pandas>=2.0
   - matplotlib>=3.7
   - pyyaml>=6
+  - pydicom>=2.4        # simulated scanner output (decnef simulate)
+  - dcm2niix             # DICOM -> NIfTI; needed by the real-time pipeline and the scanner-level simulation
   # dev
   - pytest>=7
   # optional extras are not installed here:

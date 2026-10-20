@@ -13,6 +13,7 @@ The phase plan is in `CLAUDE.md`.
 | 1. Packaging (`pyproject.toml`, `environment.yml`, editable install, tests) | `cleanup/01-packaging` | done, PR pending |
 | 1b. Session API (`rt_session.py`; launchers own only the display) | `cleanup/01b-session-api` (stacked on 01) | done, PR pending |
 | 2. Clean package, real-time core (`src/decnef/`) | `cleanup/02-decnef-core` (stacked on 01b) | done locally; replay equivalence pending on the lab machine |
+| 3. Simulator (`decnef.simulate`: scores / scanner levels, `decnef simulate`) | `cleanup/03-simulator` (stacked on 02) | done locally, both levels run |
 | 2. Data hygiene (participant data, non-fixture decoders) | – | not started |
 | 3. Configuration (default config, no `/home/sin` paths, personal settings out) | – | not started |
 | 4. Vendored code (PyHySCO as a dependency, `librtp` build step, licenses) | – | not started |
@@ -234,6 +235,31 @@ session path, settings migration and the viewer. The exact-match replay on real 
 machine (DICOM conversion, T1/MNI warp, CUDA) is still to do
 (`docs/replay_check.md`); it gates deleting the old tree.
 
+## Phase 3: simulator (`src/decnef/simulate.py`)
+
+A launcher is tested without a scanner by one argument:
+`start_session(cfg, simulate=SimulationConfig(level="scores"|"scanner", ...))`
+(full description in `docs/session_api.md`, "Simulation").
+
+- **scores**: a fake pipeline process emits one `ScoreEvent` per volume at
+  the TR with the stage label from `settings.stages`, `reg_ready` from the
+  RtpRegress rule (`max(voxel_norm_ref_volumes, n_regressors + 2)`), then
+  `end`; writes `session_metadata.json` and `scores.csv`. No tools.
+- **scanner**: a phantom (reference EPI, masks, PyHySCO calibration, decoder,
+  identity GPU grid for t1/mni) is generated once per `out_dir`, synthetic
+  Siemens-mosaic DICOMs (drift, rigid jitter, a motion spike at volume 15,
+  noise, a signal in the decoder's positive voxels during `signal_stages`)
+  are written into an incoming folder at the TR, and the **real** pipeline
+  runs on them. Needs `dcm2niix` (now in `environment.yml`); ANTs only for
+  t1/mni without the GPU resampler. `decnef replay` is the same feeder on
+  recorded DICOMs (`SimulationConfig(from_dicoms=...)`).
+- Nothing touches the real `paths.base_data`: settings are copied with paths
+  into `out_dir` (fresh temp dir, or a given dir that is reused so the
+  phantom is not regenerated each time).
+- `decnef simulate --level scores|scanner` and
+  `examples/nf_events_launcher.py --simulate scores|scanner [--sim-out DIR]`.
+- Dependencies: `pydicom` (extra `decnef[sim]`, `environment.yml`), `dcm2niix` (conda-forge).
+
 ## Test record
 
 | run | command | result |
@@ -243,6 +269,7 @@ machine (DICOM conversion, T1/MNI warp, CUDA) is still to do
 | after packaging (env `decnef` from `environment.yml`, `pip install -e . --no-deps`) | `pytest tests/` and `python -m pytest tests/` | 73 passed, per-test identical to baseline |
 | phase 1b (`cleanup/01b-session-api`) | `pytest tests/` | 97 passed (73 unchanged + 24 new); replay exact-match pending on the lab machine |
 | phase 2 (`cleanup/02-decnef-core`) | `pytest tests/` | 155 passed (97 old-tree + 58 `tests/decnef`, incl. 7 synthetic old-vs-new equivalence runs: all IDENTICAL, and the online-ingest / error-isolation / session / migration / viewer behaviour tests); real-data replay pending on the lab machine |
+| phase 3 (`cleanup/03-simulator`) | `pytest tests/` | 162 passed (155 unchanged + 7 `tests/decnef/test_simulate.py`: scores level, out_dir reuse, mosaic DICOM round trip through dcm2niix, phantom reuse, scanner level through the full pipeline with signal recovery and the FD spike, launcher `--simulate scores` dry run); `decnef simulate --level scores` and `--level scanner` run locally with `configs/jane.yaml` |
 
 Verification details (phase 1): `pip check` clean; the pip step added only
 `decnef` to the conda env; setuptools used its import-finder editable mode

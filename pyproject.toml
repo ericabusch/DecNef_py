@@ -33,6 +33,8 @@ task = ["psychopy>=2023.2", "pyglet"]
 # offline analysis helpers (roi_rs_pca_decoder_prep uses sklearn if present; compare_decoders uses h5py)
 analysis = ["scikit-learn>=1.3", "h5py>=3"]
 dev = ["pytest>=7"]
+# scanner-level simulation writes DICOMs (decnef simulate --level scanner); dcm2niix itself is an external tool
+sim = ["pydicom>=2.4"]
 
 [tool.setuptools]
 # src layout: the new package. The old flat modules (rt_pipeline.py, ...) stay in

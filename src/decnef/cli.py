@@ -1,6 +1,7 @@
 """Command line: `decnef run | replay | compare | config`.
 
     decnef run --config decnef.yaml --sub 00086 --day 3 --run 4 [--incoming DIR] [--set key.path=value ...]
+    decnef simulate --config decnef.yaml --sub .. --day .. --run 4 --level scores|scanner [--out DIR]
     decnef replay --config decnef.yaml --sub .. --day .. --dicom-dir DIR --run 4 --replay-run 901 --out OUT
     decnef compare REF NEW
     decnef config migrate old_settings.json --base-data .. --decoder-template .. [--out decnef.yaml]
@@ -15,11 +16,7 @@ import logging
 import math
 import multiprocessing as mp
 import os
-import re
-import shutil
 import sys
-import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -56,84 +53,66 @@ def cmd_run(a) -> int:
     return 0 if counts["failed"] == 0 else 1
 
 
-# ----------------------------------------------------------------------------- replay
-DICOM_RE = re.compile(r"^(\d+)_(\d+)_(\d+)\.dcm$")
+# ----------------------------------------------------------------------------- simulate / replay
 REPLAY_FILES = ["scores.csv", "scores_z.csv", "regression_status_rt.csv", "fd_rt.csv", "motion_rt.1D", "session_metadata.json"]
 
 
-def list_run_dicoms(dicom_dir: Path, run: int) -> list:
-    out = []
-    for p in dicom_dir.iterdir():
-        m = DICOM_RE.match(p.name)
-        if m and int(m.group(2)) == run:
-            out.append((int(m.group(3)), p))
-    return sorted(out)
+def _consume(session, n_expected, timeout_after_feed: float, feeder_alive, log_each: bool = True) -> tuple[int, bool]:
+    """Headless consumer: print each event, stop after the last expected volume (or a timeout once feeding ended)."""
+    seen, deadline, failed = set(), None, False
+    for ev in session.scores(timeout=0.1):
+        if ev.volume_idx is not None and ev.kind in ("score", "tick", "error"):
+            seen.add(ev.volume_idx)
+            if log_each:
+                extra = f"score={ev.score_raw:.4f} reg_ready={ev.reg_ready} stage={ev.stage}" if ev.kind == "score" else ev.kind
+                if ev.kind == "error":
+                    extra = f"ERROR {ev.meta.get('error')}"
+                log.info("[sim] vol %05d %s", ev.volume_idx, extra)
+            if len(seen) >= n_expected:
+                break
+        if ev.kind == "end":
+            break
+        if ev.kind == "error" and ev.source == "session":
+            failed = True
+            break
+        if not feeder_alive():
+            deadline = deadline or time.time() + timeout_after_feed
+            if time.time() > deadline:
+                log.error("[sim] timeout waiting for the last volume")
+                break
+    return len(seen), failed
 
 
-def copy_at_tr(files, incoming: Path, replay_run: int, tr: float, stop: threading.Event) -> None:
-    """Move each DICOM into `incoming` every `tr` seconds in scan order (staged, then os.replace)."""
-    staging = incoming.parent / (incoming.name + "_staging")
-    staging.mkdir(parents=True, exist_ok=True)
-    t_next = time.time()
-    for scan, src in files:
-        if stop.is_set():
-            return
-        m = DICOM_RE.match(src.name)
-        dst_name = f"{m.group(1)}_{replay_run:06d}_{m.group(3)}.dcm"
-        tmp = staging / dst_name
-        shutil.copyfile(src, tmp)
-        now = time.time()
-        if t_next > now:
-            time.sleep(t_next - now)
-        os.replace(tmp, incoming / dst_name)
-        t_next += tr
-        log.info("[replay] %s (%s)", dst_name, scan)
-
-
-def cmd_replay(a) -> int:
+def cmd_simulate(a) -> int:
     from .session import SessionConfig, start_session
+    from .simulate import SimulationConfig, summarize_run
 
     _logging(a.verbose)
     mp.set_start_method("spawn", force=True)
-    files = list_run_dicoms(a.dicom_dir, a.run)
-    if not files:
-        raise SystemExit(f"no DICOMs for run {a.run} in {a.dicom_dir}")
-    if a.max_volumes:
-        files = files[: a.max_volumes]
-    last_scan = files[-1][0]
-    incoming = a.incoming or Path(tempfile.mkdtemp(prefix="decnef_replay_")) / "incoming"
-    incoming.mkdir(parents=True, exist_ok=True)
-    settings = load_settings(a.config, a.overrides + ["physio.enable=false", "qc.volume_viewer=false"],
-                             **{"paths.incoming_root": str(incoming)})
-    tr = a.tr if a.tr is not None else settings.pipeline.TR
-    cfg = SessionConfig(settings, a.sub, a.day, str(a.replay_run), ap_block=a.ap_block, pa_block=a.pa_block, stop_timeout_s=30.0)
-    run_dir = cfg.layout.run_dir
-    if (run_dir / "scores.csv").exists():
-        raise SystemExit(f"{run_dir} already has scores.csv; use a new --replay-run")
-    log.info("[replay] %d volumes, run %s -> %s, TR %.3f s, incoming %s", len(files), a.run, a.replay_run, tr, incoming)
+    overrides = a.overrides + ["physio.enable=false", "qc.volume_viewer=false"] if a.level == "scanner" and a.from_dicoms else a.overrides
+    settings = load_settings(a.config, overrides)
+    sim = SimulationConfig(level=a.level, n_volumes=a.n_volumes, tr=a.tr, out_dir=a.out, motion_amp_mm=a.motion_mm,
+                           signal_amp=a.signal, noise_sd=a.noise, seed=a.seed, from_dicoms=a.from_dicoms, source_run=a.source_run)
+    cfg = SessionConfig(settings, a.sub, a.day, str(a.run), ap_block=a.ap_block, pa_block=a.pa_block, stop_timeout_s=30.0)
+    with start_session(cfg, simulate=sim) as session:
+        log.info("[sim] level=%s out_dir=%s run_dir=%s", a.level, session.simulation.out_dir, session.run_dir)
+        n_expected = a.n_volumes if not a.from_dicoms else (a.n_volumes or 10 ** 9)
+        feeder_alive = (lambda: session.feeder is not None and session.feeder.is_alive())
+        n_seen, failed = _consume(session, n_expected, a.timeout, feeder_alive, log_each=not a.quiet)
+    summary = summarize_run(session.run_dir, settings, sim)
+    summary.update({"volumes_seen": n_seen, "out_dir": str(session.simulation.out_dir), "exit_codes": session.exit_codes})
+    print(json.dumps(summary, indent=2))
+    return 0 if (not failed and n_seen >= (a.n_volumes if not a.from_dicoms else 1)) else 1
 
-    stop_copy = threading.Event()
-    copier = threading.Thread(target=copy_at_tr, args=(files, incoming, a.replay_run, tr, stop_copy), daemon=True)
-    seen_last = False
-    with start_session(cfg) as session:
-        copier.start()
-        deadline = None
-        for ev in session.scores(timeout=0.1):
-            if ev.kind in ("score", "tick", "error") and ev.volume_idx == last_scan:
-                seen_last = ev.kind != "error"
-                break
-            if ev.kind == "end" or (ev.kind == "error" and ev.source == "session"):
-                break
-            if not copier.is_alive():
-                deadline = deadline or time.time() + a.timeout
-                if time.time() > deadline:
-                    log.error("[replay] timeout waiting for the last volume")
-                    break
-    stop_copy.set()
-    a.out.mkdir(parents=True, exist_ok=True)
-    copied = [n for n in REPLAY_FILES if (run_dir / n).exists() and shutil.copyfile(run_dir / n, a.out / n)]
-    log.info("[replay] last volume %s; copied %s -> %s", "seen" if seen_last else "NOT seen", copied, a.out)
-    return 0 if seen_last else 1
+
+def cmd_replay(a) -> int:
+    """`decnef replay` = `decnef simulate --level scanner --from-dicoms DIR --source-run R`."""
+    a.level, a.from_dicoms, a.source_run = "scanner", a.dicom_dir, a.run
+    a.run = a.replay_run
+    a.n_volumes = a.max_volumes or 0
+    a.motion_mm = a.signal = a.noise = 0.0
+    a.seed, a.quiet = 0, False
+    return cmd_simulate(a)
 
 
 # ----------------------------------------------------------------------------- compare
@@ -233,14 +212,30 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--incoming", type=Path, default=None, help="incoming DICOM folder (overrides paths.incoming_root)")
     r.set_defaults(func=cmd_run)
 
-    rp = sub.add_parser("replay", help="replay a recorded run's DICOMs at the TR into a fresh run (equivalence check)")
+    sm = sub.add_parser("simulate", help="run a launcher-less simulation: fake scores (no tools) or synthetic scanner output through the real pipeline")
+    _common(sm)
+    sm.add_argument("--run", required=True, help="run id for the simulated run (any; the run folder is regenerated)")
+    sm.add_argument("--level", choices=["scores", "scanner"], default="scores")
+    sm.add_argument("--out", type=Path, default=None, help="simulation directory (default: a fresh temp dir; an existing one is reused)")
+    sm.add_argument("--n-volumes", type=int, default=60)
+    sm.add_argument("--tr", type=float, default=None, help="seconds between volumes (default: pipeline.TR)")
+    sm.add_argument("--motion-mm", type=float, default=0.5, help="rigid jitter amplitude (scanner level)")
+    sm.add_argument("--signal", type=float, default=0.02, help="fractional signal injected in the decoder's positive voxels")
+    sm.add_argument("--noise", type=float, default=5.0, help="additive noise sd (scanner level)")
+    sm.add_argument("--seed", type=int, default=0)
+    sm.add_argument("--from-dicoms", type=Path, default=None, help="scanner level: replay a recorded run's DICOMs instead of the phantom")
+    sm.add_argument("--source-run", type=int, default=None, help="run field of the recorded DICOM names (with --from-dicoms)")
+    sm.add_argument("--timeout", type=float, default=120.0, help="seconds to wait for the last volume after feeding ended")
+    sm.add_argument("--quiet", action="store_true", help="do not print every event")
+    sm.set_defaults(func=cmd_simulate)
+
+    rp = sub.add_parser("replay", help="replay a recorded run's DICOMs at the TR into a fresh run (= simulate --level scanner --from-dicoms)")
     _common(rp)
     rp.add_argument("--dicom-dir", type=Path, required=True)
     rp.add_argument("--run", type=int, required=True, help="run field of the recorded DICOM names")
     rp.add_argument("--replay-run", type=int, required=True, help="new run id to write into")
-    rp.add_argument("--out", type=Path, required=True)
+    rp.add_argument("--out", type=Path, required=True, help="simulation directory (data/, incoming/ and the run folder go here)")
     rp.add_argument("--tr", type=float, default=None, help="seconds between arrivals (default: pipeline.TR)")
-    rp.add_argument("--incoming", type=Path, default=None, help="temporary incoming folder (default: a new temp dir)")
     rp.add_argument("--max-volumes", type=int, default=None)
     rp.add_argument("--timeout", type=float, default=120.0)
     rp.set_defaults(func=cmd_replay)

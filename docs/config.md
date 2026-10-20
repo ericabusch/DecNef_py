@@ -9,6 +9,11 @@ field; `decnef config show --config f.yaml` prints the effective tree;
 `_comment_*` keys are skipped, `pipeline_engine` is dropped: only the ordered
 engine exists).
 
+Simulation parameters (`decnef.simulate.SimulationConfig`: level, number of
+volumes, phantom geometry, noise, injected signal, output directory) are not
+config keys: they are passed to `start_session(cfg, simulate=...)` or as
+`decnef simulate` flags, so a study config never carries test settings.
+
 ```yaml
 paths:
   base_data: /data/decnef          # required. sub-<sub>/<day>/... lives here       (old --base-data)
