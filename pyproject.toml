@@ -44,6 +44,7 @@ include-package-data = false
 # the repo but are not part of the distribution (see README_ELB.md for the list).
 py-modules = [
     "rt_pipeline",
+    "rt_session",
     "run_preproc",
     "rt_global_settings",
     "motion_fd",
