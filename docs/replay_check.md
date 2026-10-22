@@ -37,6 +37,12 @@ ANTs warp and the CUDA device.
 
 ## The replay check (real data, lab machine)
 
+**Status: passed on 2026-10-22** - sub-99988 day 8 run 4 (7T, T1 space, GPU
+resampler, pair ap002/pa003), 40 volumes, `IDENTICAL`. Details in
+`README_ELB.md`, test record. Use `--tr 3.0` for the legacy driver: at the
+real TR it loses the volume that arrives during its startup (fixed in the
+package, not in the old tree).
+
 Everything runs on the lab machine: it needs `dcm2niix` on `PATH`, the GPU
 (both runs on the same device), and the subject/day's offline preparation
 (`func/trans/`, the fieldmap calibration). Nothing here runs on a laptop.

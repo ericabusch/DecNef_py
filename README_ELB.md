@@ -12,7 +12,7 @@ The phase plan is in `CLAUDE.md`.
 |---|---|---|
 | 1. Packaging (`pyproject.toml`, `environment.yml`, editable install, tests) | `cleanup/01-packaging` | done, PR pending |
 | 1b. Session API (`rt_session.py`; launchers own only the display) | `cleanup/01b-session-api` (stacked on 01) | done, PR pending |
-| 2. Clean package, real-time core (`src/decnef/`) | `cleanup/02-decnef-core` (stacked on 01b) | done locally; replay equivalence pending on the lab machine |
+| 2. Clean package, real-time core (`src/decnef/`) | `cleanup/02-decnef-core` (stacked on 01b) | done; **real-data replay IDENTICAL on the lab machine (2026-10-22)** |
 | 3. Simulator (`decnef.simulate`: scores / scanner levels, `decnef simulate`) | `cleanup/03-simulator` (stacked on 02) | done locally, both levels run |
 | 2. Data hygiene (participant data, non-fixture decoders) | – | not started |
 | 3. Configuration (default config, no `/home/sin` paths, personal settings out) | – | not started |
@@ -298,6 +298,7 @@ A launcher is tested without a scanner by one argument:
 | after packaging (env `decnef` from `environment.yml`, `pip install -e . --no-deps`) | `pytest tests/` and `python -m pytest tests/` | 73 passed, per-test identical to baseline |
 | phase 1b (`cleanup/01b-session-api`) | `pytest tests/` | 97 passed (73 unchanged + 24 new); replay exact-match pending on the lab machine |
 | phase 2 (`cleanup/02-decnef-core`) | `pytest tests/` | 155 passed (97 old-tree + 58 `tests/decnef`, incl. 7 synthetic old-vs-new equivalence runs: all IDENTICAL, and the online-ingest / error-isolation / session / migration / viewer behaviour tests); real-data replay pending on the lab machine |
+| **real-data replay, lab machine (2026-10-22)** | `decnef replay` vs `replay_run.py --driver legacy` on a copy of sub-99988 day 8 run 4 (7T, T1 space, GPU resampler, CUDA PyHySCO, pair ap002/pa003 calibration built by the package, 40 volumes at `--tr 3.0`, 11 regressed) | **IDENTICAL** (`decnef compare`: scores, regression status, FD, motion). At `--tr 1.0` the legacy driver lost volume 2 to its startup gap (the bug fixed in the package), which shifted the rows; everything else matched |
 | phase 3 (`cleanup/03-simulator`) | `pytest tests/` | 162 passed (155 unchanged + 7 `tests/decnef/test_simulate.py`: scores level, out_dir reuse, mosaic DICOM round trip through dcm2niix, phantom reuse, scanner level through the full pipeline with signal recovery and the FD spike, launcher `--simulate scores` dry run); `decnef simulate --level scores` and `--level scanner` run locally with `configs/jane.yaml` |
 
 Verification details (phase 1): `pip check` clean; the pip step added only
