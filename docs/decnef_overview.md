@@ -274,15 +274,13 @@ GPU resampler.
 | Full test suite on the scanner computer (Linux, CUDA, `librtp.so`, conda env from `environment.yml`) | 67/67 passed (now 73) |
 | `decnef replay` of sub-99988 day 8 run 4 (7T, 140×140×68, T1 space via the GPU resampler, pair ap002/pa003 calibration built by the package on the GPU in 0.25 s), 40 volumes | ran end to end, ~0.1–0.2 s compute per volume at TR 1.0 |
 | Same 40 volumes through `replay_run.py --driver legacy` (old `rt_pipeline.py`) on the same copied data | `decnef compare`: **IDENTICAL** (scores, regression status, FD, motion) |
+| **Full run, 600 volumes** (2026-10-23): package at the real TR (1.0 s), legacy at 3.0 s, same copied data | `decnef compare`: **IDENTICAL** — regression over the whole history, censoring, 10 minutes of real-time throughput |
 | Per-volume NIfTIs `reg/`, `mc/`, `t1/` (md5) | **identical** |
 | `regressors_rt.csv` | identical values; column count differed until the `--tr` fix (section 5) |
 | Simulator scanner level on the lab machine | passes (synthetic DICOMs through the real pipeline, signal recovered) |
 
 ### 6.4 Not yet validated
 
-- A **full-length run** (600 volumes) old vs new at the real TR: regression
-  over the whole history, censoring events, throughput for 10 minutes.
-  Command files are in `examples/{legacy,replay}_99988.args`.
 - A second subject/config (`kostya.yaml`/`sara.yaml`: `truncate_t1_to_epi_fov`,
   two engine workers) and an **MNI-space** subject (`rt.yaml`).
 - The PsychoPy display and the QC viewer on the scanner-room machine

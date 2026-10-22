@@ -44,12 +44,12 @@ tests/decnef/                      the package's tests; tests/test_*.py still co
 
 | | |
 |---|---|
-| Real-time core (`src/decnef/`) | done; **IDENTICAL** to the original scripts on real data (lab machine, 2026-10-22) and on 7 synthetic configurations |
+| Real-time core (`src/decnef/`) | done; **IDENTICAL** to the original scripts on a full real run (600 volumes, lab machine, 2026-10-23) and on 7 synthetic configurations |
 | Simulator / replay / compare | done; both simulation levels run on macOS and on the lab's Linux machine |
 | Offline preparation (`run_preproc.py`, `fmri_rt_preproc/`) | **still the old scripts** (planned `decnef.preproc`) |
 | Resting-state PCA decoder, robot / BrainPong / RS launchers | still the old scripts (planned plugin / examples) |
 | Old tree removal, participant data out of the repo, PyHySCO as a dependency, `librtp` build, CI | not started (section 8) |
-| Remaining validation | full-length run, second subject, MNI-space subject, display on the scanner machine, live phantom scan (`docs/decnef_overview.md` §6.4) |
+| Remaining validation | second subject/config, MNI-space subject, display on the scanner machine, live phantom scan (`docs/decnef_overview.md` §6.4) |
 
 ## 2. Install
 
@@ -239,11 +239,13 @@ they are removed.
 - **7 synthetic old-vs-new runs** (`tests/decnef/test_equivalence_synthetic.py`):
   identical CSVs for baseline, masking + smoothing, regression off, original
   score, z-reference, physio file mode, MNI via the GPU resampler.
-- **Real data, lab machine, 2026-10-22**: sub-99988 day 8 run 4 (7T, T1
-  space, GPU resampler, CUDA), 40 volumes, package vs `rt_pipeline.py` on the
-  same copied data — `IDENTICAL` scores / regression status / FD / motion,
-  md5-identical `reg/ mc/ t1/` volumes, identical regressors.
-- Still to do: a full-length (600-volume) comparison, a second subject/config,
+- **Real data, lab machine, 2026-10-22/23**: sub-99988 day 8 run 4 (7T, T1
+  space, GPU resampler, CUDA), package vs `rt_pipeline.py` on the same copied
+  data — 40 volumes: `IDENTICAL` scores / regression status / FD / motion,
+  md5-identical `reg/ mc/ t1/` volumes, identical regressors; then the
+  **full 600-volume run** (package at the real TR 1.0 s, legacy at 3.0 s):
+  `IDENTICAL`.
+- Still to do: a second subject/config,
   an MNI-space subject, the display and QC viewer on the scanner machine,
   shutdown mid-run, BIOPAC in TCP mode, and a live phantom scan with
   `decnef run` (`docs/decnef_overview.md` §6.4).
