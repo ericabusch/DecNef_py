@@ -42,6 +42,8 @@ resampler, pair ap002/pa003), 40 volumes, `IDENTICAL`. Details in
 `README_ELB.md`, test record. Use `--tr 3.0` for the legacy driver: at the
 real TR it loses the volume that arrives during its startup (fixed in the
 package, not in the old tree).
+`--tr` paces the arrivals only (both drivers); the pipeline runs with the
+config's TR, so the two runs are comparable whatever the pacing.
 
 Everything runs on the lab machine: it needs `dcm2niix` on `PATH`, the GPU
 (both runs on the same device), and the subject/day's offline preparation

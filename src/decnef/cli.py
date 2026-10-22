@@ -238,7 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("--level", choices=["scores", "scanner"], default="scores")
     sm.add_argument("--out", type=Path, default=None, help="simulation directory (default: a fresh temp dir; an existing one is reused)")
     sm.add_argument("--n-volumes", type=int, default=60)
-    sm.add_argument("--tr", type=float, default=None, help="seconds between volumes (default: pipeline.TR)")
+    sm.add_argument("--tr", type=float, default=None,
+                    help="seconds between delivered volumes (default: pipeline.TR). Pacing only: the pipeline keeps pipeline.TR")
     sm.add_argument("--motion-mm", type=float, default=0.5, help="rigid jitter amplitude (scanner level)")
     sm.add_argument("--signal", type=float, default=0.02, help="fractional signal injected in the decoder's positive voxels")
     sm.add_argument("--noise", type=float, default=5.0, help="additive noise sd (scanner level)")
@@ -255,7 +256,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--run", type=int, required=True, help="run field of the recorded DICOM names")
     rp.add_argument("--replay-run", type=int, required=True, help="new run id to write into")
     rp.add_argument("--out", type=Path, required=True, help="simulation directory (data/, incoming/ and the run folder go here)")
-    rp.add_argument("--tr", type=float, default=None, help="seconds between arrivals (default: pipeline.TR)")
+    rp.add_argument("--tr", type=float, default=None,
+                    help="seconds between arrivals (default: pipeline.TR). Pacing only: the pipeline keeps pipeline.TR")
     rp.add_argument("--max-volumes", type=int, default=None)
     rp.add_argument("--timeout", type=float, default=120.0)
     rp.set_defaults(func=cmd_replay)

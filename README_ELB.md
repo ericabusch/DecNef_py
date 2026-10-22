@@ -288,6 +288,12 @@ A launcher is tested without a scanner by one argument:
   when the native calibration is missing but raw AP/PA exist, by replay
   staging (in the copy, before the pipeline starts) and by the new
   `decnef calibrate` command. Tests run PyHySCO for real on the synthetic pair.
+- Found by diffing `regressors_rt.csv` after the IDENTICAL replay: `--tr`
+  used to override `pipeline.TR` as well as pace the arrivals, which changes
+  RtpRegress's polynomial order (`1 + int(TR*n/150)`: 15 vs 42 columns at
+  `--tr 3.0`) and, over a long run, the regression itself. `tr` now paces
+  delivery only; the pipeline always runs with the study's TR. Simulated and
+  replayed runs record a `simulation` block in `session_metadata.json`.
 
 ## Test record
 

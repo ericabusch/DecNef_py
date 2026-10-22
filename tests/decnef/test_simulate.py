@@ -32,7 +32,7 @@ def _settings(tmp_path, stages=True, **pipeline):
 def test_scores_level_runs_a_schedule_headless(tmp_path):
     mp.set_start_method("spawn", force=True)
     settings = _settings(tmp_path)
-    sim = SimulationConfig(level="scores", n_volumes=24, out_dir=tmp_path / "sim", seed=1)
+    sim = SimulationConfig(level="scores", n_volumes=24, out_dir=tmp_path / "sim", seed=1, tr=0.2)   # pacing; pipeline TR stays 0.2 too
     cfg = SessionConfig(settings, "00", "1", "4", metadata={"launcher": {"name": "test"}})
     events = []
     with start_session(cfg, simulate=sim) as session:
@@ -54,6 +54,7 @@ def test_scores_level_runs_a_schedule_headless(tmp_path):
     assert len(rows) == 24 and rows[5]["event_type"] == sched.label_for_volume(6)
     meta = json.loads((session.run_dir / "session_metadata.json").read_text())
     assert meta["launcher"] == {"name": "test"} and meta["simulation"]["level"] == "scores" and meta["stages"]["n_cycles"] == 3
+    assert meta["settings"]["pipeline"]["TR"] == 0.2 and meta["simulation"]["tr"] == 0.2
     on = signal_schedule(settings, sim)
     summary = summarize_run(session.run_dir, settings, sim)
     assert summary["mean_on"] > summary["mean_off"]                               # injected signal shows in 'scans'
@@ -222,6 +223,7 @@ def test_replay_of_simulated_dicoms_reproduces_the_scores(tmp_path):
     settings = _settings(tmp_path, stages=False)
     settings.pipeline.TR = 0.3
     rec = SimulationConfig(level="scanner", n_volumes=14, out_dir=tmp_path / "A", grid=(16, 16, 8))
+    # the replay below is paced at a different tr: the pipeline must still run with TR=0.3 (identical scores)
     with start_session(SessionConfig(settings, "00", "1", "5", stop_timeout_s=30.0), simulate=rec) as s1:
         _drain_until(s1, 14)
     recorded = s1.run_dir
@@ -230,7 +232,7 @@ def test_replay_of_simulated_dicoms_reproduces_the_scores(tmp_path):
     real.pipeline.TR = 0.3
     real.paths.base_data = tmp_path / "A" / "data"
     real.decoder.template = tmp_path / "A" / "decoder.nii"
-    rep = SimulationConfig(level="scanner", out_dir=tmp_path / "B", from_dicoms=tmp_path / "A" / "incoming", source_run=5)
+    rep = SimulationConfig(level="scanner", out_dir=tmp_path / "B", from_dicoms=tmp_path / "A" / "incoming", source_run=5, tr=0.5)
     with start_session(SessionConfig(real, "sim", "1", "905", stop_timeout_s=30.0), simulate=rep) as s2:
         _drain_until(s2, 14)
     assert s2.run_dir == tmp_path / "B" / "data" / "sub-sim" / "1" / "func" / "905"
@@ -238,6 +240,8 @@ def test_replay_of_simulated_dicoms_reproduces_the_scores(tmp_path):
     a = [(r["volume_idx"], r["score_raw"], r["reg_ready"]) for r in csv.DictReader(open(recorded / "scores.csv"))]
     b = [(r["volume_idx"], r["score_raw"], r["reg_ready"]) for r in csv.DictReader(open(s2.run_dir / "scores.csv"))]
     assert len(a) == 14 and a == b
+    meta = json.loads((s2.run_dir / "session_metadata.json").read_text())
+    assert meta["settings"]["pipeline"]["TR"] == 0.3 and meta["simulation"]["tr"] == 0.5   # pacing != pipeline TR
 
 
 def _drain_until(session, n, timeout=120):

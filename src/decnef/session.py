@@ -293,12 +293,14 @@ def start_session(cfg: SessionConfig, simulate=None) -> Session:
             else:
                 phantom = S.make_phantom(settings, simulate, sim_paths)
                 items = S.phantom_items(phantom, settings, simulate, int(cfg.run))
-            feeder = S.ScannerFeeder(items, sim_paths.incoming, float(settings.pipeline.TR))
+            feeder = S.ScannerFeeder(items, sim_paths.incoming, S.arrival_tr(settings, simulate))
         else:
             pipeline_target, pipeline_extra = S.scores_pipeline_main, (simulate.to_dict(),)
     layout.create_run_dirs()
     if cfg.metadata:
         outputs.write_metadata(layout.metadata_json, cfg.metadata)
+    if simulate is not None:   # provenance: this run was simulated/replayed, and how
+        outputs.write_metadata(layout.metadata_json, {"simulation": {"level": simulate.level, **simulate.to_dict()}})
     physio_target = physio_args = None
     ph = settings.physio
     if ph.listener:

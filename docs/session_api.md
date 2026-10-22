@@ -107,7 +107,7 @@ DICOM feeder thread at the scanner level (`None` otherwise).
 |---|---|---|
 | `level` | `"scores"` | `"scores"` or `"scanner"` |
 | `n_volumes` | 60 | volumes to produce; the fake pipeline / feeder stops after them |
-| `tr` | `settings.pipeline.TR` | seconds between volumes |
+| `tr` | `settings.pipeline.TR` | seconds between *delivered* volumes (pacing only). The pipeline always runs with `pipeline.TR`, which sets RtpRegress's polynomial order and the physio alignment, so a slow replay gives the same numbers as a real-time one |
 | `out_dir` | fresh `tempfile.mkdtemp("decnef_sim_")` | an existing directory is **reused**: the phantom and calibration are regenerated only when `phantom.json` is missing or its parameters differ; the run folder is always recreated |
 | `sub`, `day` | `"sim"`, `"1"` | phantom subject/day under `out_dir/data` |
 | `grid`, `voxel_mm` | `(32, 32, 20)`, 3.0 | phantom geometry |

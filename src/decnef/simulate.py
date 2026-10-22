@@ -188,9 +188,14 @@ def simulation_settings(settings: Settings, paths: SimPaths, sim: SimulationConf
     if sim.level == "scanner" and sim.from_dicoms is None:
         s.decoder.template = paths.decoder
         s.decoder.roi_txt = None
-    if sim.tr is not None:
-        s.pipeline.TR = float(sim.tr)
+    # sim.tr paces the arrivals only: the pipeline's TR stays the study's (it sets RtpRegress's
+    # polynomial order, 1 + int(TR * n / 150), and the physio alignment)
     return s
+
+
+def arrival_tr(settings: Settings, sim: SimulationConfig) -> float:
+    """Seconds between volumes delivered by the simulation: `sim.tr`, else the study's TR."""
+    return float(sim.tr) if sim.tr is not None else float(settings.pipeline.TR)
 
 
 def reset_run_dir(paths: SimPaths) -> None:
@@ -242,7 +247,7 @@ def scores_pipeline_main(settings_dict: dict, layout: RunLayout, sim_dict: dict,
     sched = StageSchedule.from_config(settings.stages, settings.pipeline.skip_first_trs)
     on = signal_schedule(settings, sim)
     ready_from = reg_ready_from(settings, sim)
-    tr = float(settings.pipeline.TR)
+    tr = arrival_tr(settings, sim)
     outputs.write_metadata(layout.metadata_json, outputs.session_metadata_payload(settings, layout, settings.decoder.template, None, "simulated_scores"))
     outputs.write_metadata(layout.metadata_json, {"simulation": {"level": "scores", **sim.to_dict()},
                                                   **({"stages": sched.to_metadata()} if sched else {})})
