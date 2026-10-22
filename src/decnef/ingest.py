@@ -84,6 +84,12 @@ class IncomingWatcher(FileSystemEventHandler):
         if not event.is_directory:
             self.enqueue(Path(event.src_path))
 
+    def on_moved(self, event):
+        # a file renamed into the folder (simulate/replay use os.replace): inotify reports it as
+        # moved-to, not created, so without this volumes never arrive on Linux
+        if not event.is_directory:
+            self.enqueue(Path(event.dest_path))
+
     def set_online(self) -> None:
         self._online = True
 

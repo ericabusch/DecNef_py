@@ -134,13 +134,13 @@ def test_scanner_level_full_pipeline_recovers_injected_signal(tmp_path):
     sim = SimulationConfig(level="scanner", n_volumes=24, out_dir=tmp_path / "sim", grid=(24, 24, 12), signal_amp=0.05,
                            motion_amp_mm=0.3, noise_sd=3.0)
     cfg = SessionConfig(settings, "00", "1", "7", stop_timeout_s=30.0)
-    events, deadline = [], time.time() + 240
+    events, deadline = [], time.time() + 120
     with start_session(cfg, simulate=sim) as session:
         assert session.feeder is not None
-        for ev in session.scores(timeout=0.5):
-            events.append(ev)
-            if len([e for e in events if e.volume_idx is not None]) == 24 or time.time() > deadline:
-                break
+        while len([e for e in events if e.volume_idx is not None]) < 24:   # poll(): a stalled pipeline must fail, not hang
+            events.extend(session.poll())
+            assert time.time() < deadline, f"pipeline stalled: {len(events)} events: {events[-3:]}"
+            time.sleep(0.1)
     run_dir = session.run_dir
     scores = [e for e in events if e.kind == "score"]
     errors = [e for e in events if e.kind == "error"]

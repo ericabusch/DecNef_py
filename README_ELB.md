@@ -259,6 +259,13 @@ A launcher is tested without a scanner by one argument:
 - `decnef simulate --level scores|scanner` and
   `examples/nf_events_launcher.py --simulate scores|scanner [--sim-out DIR]`.
 - Dependencies: `pydicom` (extra `decnef[sim]`, `environment.yml`), `dcm2niix` (conda-forge).
+- Linux fix found on the scanner machine: the feeder renames files into the
+  incoming folder (`os.replace`); inotify reports that as *moved-to*, which
+  the watcher (old and new) ignored, so simulate/replay stalled with zero
+  volumes. `IncomingWatcher.on_moved` now enqueues the destination. Real
+  scanner output (created/closed events) was never affected. The `decnef
+  simulate` consumer and the level-2 test now time out on a silent pipeline
+  instead of hanging.
 
 ## Test record
 

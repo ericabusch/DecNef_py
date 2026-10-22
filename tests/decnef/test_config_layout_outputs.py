@@ -143,3 +143,17 @@ def test_stage_schedule_labels_and_windows():
     assert s.windows()[-1] == {"cycle": 2, "stage": "feedback", "start_tr": 11, "end_tr": 11}
     assert StageSchedule(cycle=[("rest", 1)]).label_for_volume(99) == "rest"
     assert StageSchedule().label_for_volume(5) is None
+
+
+def test_incoming_watcher_handles_created_closed_and_moved_events(tmp_path):
+    """inotify (Linux) reports a file renamed into the folder as moved-to, FSEvents (macOS) as created."""
+    from watchdog.events import FileClosedEvent, FileCreatedEvent, FileMovedEvent
+
+    from decnef.ingest import IncomingWatcher
+
+    w = IncomingWatcher(4)
+    w.on_created(FileCreatedEvent(str(tmp_path / "001_000004_000002.dcm")))
+    w.on_moved(FileMovedEvent(str(tmp_path / ".staging" / "x.dcm"), str(tmp_path / "001_000004_000001.dcm")))
+    w.on_closed(FileClosedEvent(str(tmp_path / "001_000004_000002.dcm")))          # duplicate: ignored
+    w.on_moved(FileMovedEvent(str(tmp_path / "a"), str(tmp_path / "001_000005_000001.dcm")))   # other run: ignored
+    assert w.next_pending()[0] == 1 and w.next_pending()[0] == 2 and w.next_pending() is None

@@ -59,27 +59,34 @@ REPLAY_FILES = ["scores.csv", "scores_z.csv", "regression_status_rt.csv", "fd_rt
 
 def _consume(session, n_expected, timeout_after_feed: float, feeder_alive, log_each: bool = True) -> tuple[int, bool]:
     """Headless consumer: print each event, stop after the last expected volume (or a timeout once feeding ended)."""
-    seen, deadline, failed = set(), None, False
-    for ev in session.scores(timeout=0.1):
-        if ev.volume_idx is not None and ev.kind in ("score", "tick", "error"):
-            seen.add(ev.volume_idx)
-            if log_each:
-                extra = f"score={ev.score_raw:.4f} reg_ready={ev.reg_ready} stage={ev.stage}" if ev.kind == "score" else ev.kind
-                if ev.kind == "error":
-                    extra = f"ERROR {ev.meta.get('error')}"
-                log.info("[sim] vol %05d %s", ev.volume_idx, extra)
-            if len(seen) >= n_expected:
-                break
-        if ev.kind == "end":
-            break
-        if ev.kind == "error" and ev.source == "session":
-            failed = True
+    seen, deadline, failed, done = set(), None, False, False
+    last_event = time.time()
+    # poll() rather than scores(): the deadline must fire even if the pipeline never emits anything
+    while not done:
+        for ev in session.poll():
+            last_event = time.time()
+            if ev.volume_idx is not None and ev.kind in ("score", "tick", "error"):
+                seen.add(ev.volume_idx)
+                if log_each:
+                    extra = f"score={ev.score_raw:.4f} reg_ready={ev.reg_ready} stage={ev.stage}" if ev.kind == "score" else ev.kind
+                    if ev.kind == "error":
+                        extra = f"ERROR {ev.meta.get('error')}"
+                    log.info("[sim] vol %05d %s", ev.volume_idx, extra)
+                if len(seen) >= n_expected:
+                    done = True
+            if ev.kind == "end":
+                done = True
+            if ev.kind == "error" and ev.source == "session":
+                failed = done = True
+        if done:
             break
         if not feeder_alive():
             deadline = deadline or time.time() + timeout_after_feed
-            if time.time() > deadline:
-                log.error("[sim] timeout waiting for the last volume")
-                break
+        if (deadline and time.time() > deadline) or time.time() - last_event > timeout_after_feed:
+            log.error("[sim] timeout: %d/%d volumes seen, nothing from the pipeline for %.0f s", len(seen), n_expected, timeout_after_feed)
+            failed = True
+            break
+        time.sleep(0.05)
     return len(seen), failed
 
 
