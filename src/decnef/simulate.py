@@ -155,6 +155,13 @@ def stage_subject_copy(settings: Settings, paths: SimPaths, log_=log) -> list:
             _relabel_calibrations(src, dst, log_)
         copied.append(dst)
         log_.info("[replay] copied %s -> %s", src, dst)
+    # data prepared before the native calibration existed (pyhysco_epi-* only): build it in the copy,
+    # here rather than inside the pipeline process, so a long PyHySCO run does not look like a stall
+    from . import calibration
+
+    if not calibration.fieldmap_ready(lay.fmap_dir) and calibration.can_build(lay.fmap_dir):
+        log_.warning("[replay] no native calibration in %s; building it in the copy (PyHySCO, may take minutes on CPU)", lay.fmap_dir)
+        calibration.build_native_calibration(lay.fmap_dir, log_=log_)
     return copied
 
 

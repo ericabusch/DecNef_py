@@ -96,7 +96,22 @@ with the run field rewritten to `--replay-run`, and the new run's outputs
 land in `<out>/data/sub-SUB/DAY/func/902/`. The decoder is read in place.
 The copied `calibration.json` is relabelled to point at the copied AP/PA
 sources (it records their path/size/mtime as provenance; the real one is
-verified first). Compare against the legacy output with
+verified first). Subjects prepared before the native calibration
+existed (pair folders holding only `pyhysco_epi-*` outputs) get it built in
+the copy from the raw `AP.nii.gz`/`PA.nii.gz` before the pipeline starts -
+the preparation's own step (means without motion correction, PyHySCO 50
+iterations), which is what the old `rt_pipeline.py` did at startup
+(`ensure_fieldmap_only`). Minutes on CPU, seconds on the GPU. To build it in
+the real tree once instead: `decnef calibrate --config decnef.yaml --sub SUB
+--day DAY --ap-block A --pa-block P`.
+
+**Which reference to compare against.** The run's original `func/R/` outputs
+were produced by the code of that day; upstream changed the pipeline since
+(unwarp before motion correction and the native calibration on 2026-09-25,
+final smoothing/mask selection on 2026-10-01). `decnef compare` against the
+original `func/R/` is therefore only meaningful for runs acquired after those
+changes; otherwise the reference is the legacy driver of step 2 run on the
+same copied data. Compare against the legacy output with
 `decnef compare /tmp/replay_ref /tmp/replay_new/data/sub-SUB/DAY/func/902`.
 
 ### 4. Compare

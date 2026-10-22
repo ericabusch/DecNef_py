@@ -22,7 +22,8 @@ import torch
 from watchdog.observers import Observer
 
 from . import outputs
-from .calibration import PIPELINE_ORDER, fieldmap_path, fieldmap_ready, load_calibration, native_paths, source_identity
+from .calibration import (PIPELINE_ORDER, build_native_calibration, can_build, fieldmap_path, fieldmap_ready, load_calibration,
+                          native_paths, source_identity)
 from .config import PHYS_REG_COUNTS, Settings
 from .decoder import DecoderScorer
 from .engine import OrderedEngine, ResultEnvelope
@@ -62,8 +63,12 @@ def check_prerequisites(settings: Settings, layout: RunLayout) -> Path:
     if not layout.motion_ref_epi.exists():
         raise PipelineError(f"motion/analysis reference not found at {layout.motion_ref_epi}; run the offline preparation first")
     if not fieldmap_ready(layout.fmap_dir):
-        raise PipelineError(f"fieldmap calibration missing or incomplete in {layout.fmap_dir}/{native_paths(layout.fmap_dir)[0].name}; "
-                            "build it with the offline preparation")
+        # as the original `ensure_fieldmap_only`: build from the raw AP/PA of the selected pair at startup
+        if not can_build(layout.fmap_dir):
+            raise PipelineError(f"fieldmap calibration missing in {layout.fmap_dir}/{native_paths(layout.fmap_dir)[0].name} and no raw "
+                                f"AP/PA.nii[.gz] in {layout.fmap_dir} to build it from; run the offline preparation (or `decnef calibrate`)")
+        log.warning("[FMAP] calibration missing for %s; building it now (PyHySCO)", layout.fmap_dir)
+        build_native_calibration(layout.fmap_dir, log_=log)
     load_calibration(layout.fmap_dir)   # raises when stale
     decoder = None
     if settings.decoder.enable_scoring:

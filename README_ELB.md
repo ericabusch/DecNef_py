@@ -280,6 +280,14 @@ A launcher is tested without a scanner by one argument:
   place; the real tree is never written. Tests: staging unit test and an
   end-to-end replay of a recorded simulated run that reproduces identical
   scores.
+- Real data on the lab machine predates `native_unwarp_v1/` (pair folders
+  hold `pyhysco_epi-*` only); the old `rt_pipeline.py` built the calibration
+  at startup (`ensure_fieldmap_only`). The package now does the same:
+  `calibration.build_native_calibration` (the preparation's step, PyHySCO via
+  the vendored script, same parameters) is called by `check_prerequisites`
+  when the native calibration is missing but raw AP/PA exist, by replay
+  staging (in the copy, before the pipeline starts) and by the new
+  `decnef calibrate` command. Tests run PyHySCO for real on the synthetic pair.
 
 ## Test record
 

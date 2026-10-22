@@ -126,6 +126,19 @@ def cmd_replay(a) -> int:
 IGNORE_COLUMNS = {"timestamp", "analysis_timestamp", "watchdog_timestamp"}
 
 
+def cmd_calibrate(a) -> int:
+    """`decnef calibrate`: the fieldmap-only part of the offline preparation, in the real tree."""
+    from .calibration import build_native_calibration, native_paths
+    from .layout import RunLayout
+
+    _logging(a.verbose)
+    settings = load_settings(a.config, a.overrides)
+    layout = RunLayout(settings.paths.base_data, a.sub, a.day, "0", None, a.ap_block, a.pa_block)
+    spec = build_native_calibration(layout.fmap_dir, max_iter=a.max_iter, log_=log)
+    print(json.dumps({"pair_dir": str(layout.fmap_dir), "calibration": str(native_paths(layout.fmap_dir)[2]), "spec": spec}, indent=2))
+    return 0
+
+
 def _same(x: str, y: str, rtol: float, atol: float) -> bool:
     if x == y:
         return True
@@ -253,6 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--rtol", type=float, default=0.0)
     c.add_argument("--atol", type=float, default=0.0)
     c.set_defaults(func=cmd_compare)
+
+    cb = sub.add_parser("calibrate", help="build the native fieldmap calibration (native_unwarp_v1/) for a subject/day's AP/PA pair")
+    _common(cb)
+    cb.add_argument("--max-iter", type=int, default=50, help="PyHySCO iterations (the preparation uses 50)")
+    cb.set_defaults(func=cmd_calibrate)
 
     cf = sub.add_parser("config", help="config file helpers")
     cfs = cf.add_subparsers(dest="config_cmd", required=True)

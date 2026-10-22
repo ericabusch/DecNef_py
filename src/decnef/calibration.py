@@ -4,13 +4,24 @@ A calibration lives in `<fmap_dir>/native_unwarp_v1/`: `AP_mean.nii`,
 `PA_mean.nii`, the PyHySCO field `pyhysco_native-EstFieldMap.nii` and
 `calibration.json` (the spec below). The real-time run validates every raw
 volume against it (same grid, same phase-encoding polarity, same readout).
-Unchanged from the original `native_fieldmap.py`.
+Unchanged from the original `native_fieldmap.py`. `build_native_calibration`
+is the original preparation step (`FMRIRealtimePreprocessor._prepare_fieldmap`
++ `_run_ap_pa_pyhysco`): raw AP/PA averaged without motion correction, then
+the PyHySCO estimation script with the same parameters.
 """
+import gzip
 import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 PIPELINE_ORDER = "unwarp_then_mc_v1"
 NATIVE_DIR = "native_unwarp_v1"
@@ -91,6 +102,56 @@ def load_calibration(pair_dir):
     expected = calibration_spec(find_source(pair_dir, "AP"), find_source(pair_dir, "PA"))
     if spec != expected or not all(p.exists() for p in (field, folder / "AP_mean.nii", folder / "PA_mean.nii")):
         raise ValueError("Native calibration is stale or incomplete; rebuild the selected pair.")
+    return spec
+
+
+def can_build(pair_dir) -> bool:
+    """Raw AP/PA present, so the native calibration can be built here."""
+    try:
+        find_source(pair_dir, "AP"), find_source(pair_dir, "PA")
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def build_native_calibration(pair_dir, max_iter: int = 50, log_=log) -> dict:
+    """Build (or refresh) `<pair_dir>/native_unwarp_v1/` from the raw AP/PA in `pair_dir`: means without
+    motion correction, then PyHySCO (GaussNewton, alpha=300, beta=1e-4, jac, single precision - the
+    script's defaults, as in the original preparation). A complete, current calibration is kept.
+    Several minutes on CPU for a 7T volume; seconds on a GPU. Returns the spec."""
+    from .unwarp import PYHYSCO_SRC   # vendored PyHySCO; lazy (imports torch)
+
+    pair_dir = Path(pair_dir)
+    ap, pa = find_source(pair_dir, "AP"), find_source(pair_dir, "PA")
+    spec = calibration_spec(ap, pa)
+    if spec["ap_pe"] is None and spec["pa_pe"] is None:
+        log_.warning("[FMAP] AP/PA metadata missing: using legacy voxel phase-encoding axis 2")
+    folder, field, manifest = native_paths(pair_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    ap_mean, pa_mean = folder / "AP_mean.nii", folder / "PA_mean.nii"
+    if manifest.exists() and all(p.exists() for p in (field, ap_mean, pa_mean)) and json.loads(manifest.read_text()) == spec:
+        return spec
+    if manifest.exists():
+        manifest.unlink()                      # an interrupted build must never look complete
+    require_same_grid(nib.load(str(ap)), nib.load(str(pa)))
+    save_native_mean(ap, ap_mean)
+    save_native_mean(pa, pa_mean)
+    generated = folder / "pyhysco_native-EstFieldMap.nii.gz"
+    for stale in (field, generated):
+        if stale.exists():
+            stale.unlink()
+    log_.info("[FMAP] PyHySCO estimation in %s (max_iter=%d)", folder, max_iter)
+    env = dict(os.environ, PYTHONPATH=f"{PYHYSCO_SRC}{os.pathsep}{os.environ.get('PYTHONPATH', '')}")
+    subprocess.run([sys.executable, str(PYHYSCO_SRC / "scripts" / "pyhysco.py"), str(ap_mean), str(pa_mean),
+                    str(spec["phase_encoding_axis"]), "--output_dir", str(folder / "pyhysco_native"),
+                    "--max_iter", str(max_iter), "--correction", "jac"], check=True, env=env, cwd=str(folder))
+    if generated.exists():
+        with gzip.open(generated, "rb") as f_in, open(field, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+    if not field.exists():
+        raise FileNotFoundError(f"PyHySCO did not produce {field}")
+    manifest.write_text(json.dumps(spec, indent=2))
+    log_.info("[FMAP] native calibration built: %s", folder)
     return spec
 
 

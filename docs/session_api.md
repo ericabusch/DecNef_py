@@ -115,7 +115,7 @@ DICOM feeder thread at the scanner level (`None` otherwise).
 | `signal_amp` | 0.02 | fractional signal added to the decoder's positive voxels while "on" |
 | `signal_stages` | `("scans",)` | stage labels during which the signal is on; without `settings.stages`, 10-on/10-off blocks |
 | `seed` | 0 | RNG seed |
-| `from_dicoms`, `source_run` | `None` | scanner level from a recorded run instead of a phantom (= `decnef replay`): the real `cfg.sub/cfg.day` is kept, the subject's prepared data (`anat/`, `fmap/`, `func/trans/`, the reference run) is copied into `out_dir/data` once and the real tree is only read; the decoder is read in place |
+| `from_dicoms`, `source_run` | `None` | scanner level from a recorded run instead of a phantom (= `decnef replay`): the real `cfg.sub/cfg.day` is kept, the subject's prepared data (`anat/`, `fmap/`, `func/trans/`, the reference run) is copied into `out_dir/data` once and the real tree is only read; the decoder is read in place; a missing native calibration is built in the copy from the raw AP/PA |
 | `reg_ready_from` | RtpRegress rule | scores level: first `reg_ready` volume |
 | `baseline_score`, `score_noise_sd` | 0.0, 1.0 | scores level: score distribution |
 
