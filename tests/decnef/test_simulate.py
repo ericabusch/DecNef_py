@@ -188,3 +188,62 @@ def test_example_launcher_dry_run_scores_level(tmp_path, monkeypatch):
     rows = list(csv.DictReader(open(run_dir / "trial_scores.csv")))
     assert [r["trial"] for r in rows] == ["1", "2"] and fake._Window.closed == 1
     assert (run_dir / "scores.csv").exists() and not (tmp_path / "real_data").exists()
+
+
+# ----------------------------------------------------------------------------- replay (recorded DICOMs)
+def test_replay_stages_a_copy_of_the_subject_and_never_writes_the_real_tree(tmp_path):
+    from decnef.simulate import stage_subject_copy
+
+    settings = _settings(tmp_path)
+    settings.decoder.reference_score_run = "3"
+    real = tmp_path / "real_data" / "sub-86"
+    for rel in ("anat", "2/fmap/native_unwarp_v1", "2/func/trans/gpu_grids", "2/func/3", "2/func/4"):
+        (real / rel).mkdir(parents=True)
+        (real / rel / "x.nii").write_bytes(b"\0")
+    sim = SimulationConfig(level="scanner", out_dir=tmp_path / "sim", from_dicoms=tmp_path, source_run=4)
+    paths = resolve_sim_paths(settings, "902", sim, sub="86", day="2")
+    assert paths.run_dir == tmp_path / "sim" / "data" / "sub-86" / "2" / "func" / "902"
+    before = sorted(p.relative_to(real) for p in real.rglob("*"))
+    copied = stage_subject_copy(settings, paths)
+    assert sorted(p.name for p in copied) == ["3", "anat", "fmap", "trans"]           # reference run yes, run 4 no
+    assert not (paths.base_data / "sub-86" / "2" / "func" / "4").exists()
+    assert (paths.base_data / "sub-86" / "2" / "func" / "trans" / "gpu_grids" / "x.nii").exists()
+    assert sorted(p.relative_to(real) for p in real.rglob("*")) == before            # real tree untouched
+    assert stage_subject_copy(settings, paths) == []                                   # reused on a second call
+    with pytest.raises(SimulationError):
+        stage_subject_copy(settings, resolve_sim_paths(settings, "902", sim, sub="00", day="9"))
+
+
+@needs_dcm2niix
+def test_replay_of_simulated_dicoms_reproduces_the_scores(tmp_path):
+    """Record a scanner-level run under A, then `decnef replay` its DICOMs into B against A's data:
+    same volumes, same prepared data -> identical scores. This is the real-data replay path."""
+    mp.set_start_method("spawn", force=True)
+    settings = _settings(tmp_path, stages=False)
+    settings.pipeline.TR = 0.3
+    rec = SimulationConfig(level="scanner", n_volumes=14, out_dir=tmp_path / "A", grid=(16, 16, 8))
+    with start_session(SessionConfig(settings, "00", "1", "5", stop_timeout_s=30.0), simulate=rec) as s1:
+        _drain_until(s1, 14)
+    recorded = s1.run_dir
+    # B: the real-tree settings point at A's data and decoder
+    real = _settings(tmp_path, stages=False)
+    real.pipeline.TR = 0.3
+    real.paths.base_data = tmp_path / "A" / "data"
+    real.decoder.template = tmp_path / "A" / "decoder.nii"
+    rep = SimulationConfig(level="scanner", out_dir=tmp_path / "B", from_dicoms=tmp_path / "A" / "incoming", source_run=5)
+    with start_session(SessionConfig(real, "sim", "1", "905", stop_timeout_s=30.0), simulate=rep) as s2:
+        _drain_until(s2, 14)
+    assert s2.run_dir == tmp_path / "B" / "data" / "sub-sim" / "1" / "func" / "905"
+    assert not (tmp_path / "A" / "data" / "sub-sim" / "1" / "func" / "905").exists()      # A only read
+    a = [(r["volume_idx"], r["score_raw"], r["reg_ready"]) for r in csv.DictReader(open(recorded / "scores.csv"))]
+    b = [(r["volume_idx"], r["score_raw"], r["reg_ready"]) for r in csv.DictReader(open(s2.run_dir / "scores.csv"))]
+    assert len(a) == 14 and a == b
+
+
+def _drain_until(session, n, timeout=120):
+    events, deadline = [], time.time() + timeout
+    while len([e for e in events if e.volume_idx is not None]) < n:
+        events.extend(session.poll())
+        assert time.time() < deadline, f"stalled: {len(events)} events"
+        time.sleep(0.1)
+    return events

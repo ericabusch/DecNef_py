@@ -107,15 +107,70 @@ class SimPaths:
 
 
 # ----------------------------------------------------------------------------- paths
-def resolve_sim_paths(settings: Settings, run: str, sim: SimulationConfig, ap_block=None, pa_block=None) -> SimPaths:
-    """Where a simulation lives. A fresh temp dir unless `sim.out_dir` is given (then reused)."""
+def resolve_sim_paths(settings: Settings, run: str, sim: SimulationConfig, ap_block=None, pa_block=None,
+                      sub: Optional[str] = None, day: Optional[str] = None) -> SimPaths:
+    """Where a simulation lives. A fresh temp dir unless `sim.out_dir` is given (then reused).
+    The phantom lives under `sim.sub/sim.day`; a replay (`from_dicoms`) keeps the real subject/day so
+    the copy of its prepared data is found at the same relative paths."""
     out_dir = sim.out_dir if sim.out_dir is not None else Path(tempfile.mkdtemp(prefix="decnef_sim_"))
     out_dir.mkdir(parents=True, exist_ok=True)
     base_data = out_dir / "data"
     incoming = out_dir / "incoming"
-    layout = RunLayout(base_data, sim.sub, sim.day, str(run), incoming_root=incoming, ap_block=ap_block, pa_block=pa_block)
+    if sim.from_dicoms is not None and sub is not None and day is not None:
+        sub, day = str(sub), str(day)
+    else:
+        sub, day = sim.sub, sim.day
+    layout = RunLayout(base_data, sub, day, str(run), incoming_root=incoming, ap_block=ap_block, pa_block=pa_block)
     return SimPaths(out_dir=out_dir, base_data=base_data, incoming=incoming, layout=layout, decoder=out_dir / "decoder.nii",
                     phantom_manifest=out_dir / "phantom.json")
+
+
+# what a replay needs from the real subject, relative to the subject/day roots (never the run folders)
+REPLAY_PREPARED_DIRS = ("anat", "{day}/fmap", "{day}/func/trans")
+
+
+def stage_subject_copy(settings: Settings, paths: SimPaths, log_=log) -> list:
+    """Replay: copy the real subject's prepared data (anat, fieldmaps + calibration, func/trans) from
+    `settings.paths.base_data` into the simulation's base_data so the real tree is only ever read.
+    A folder already present under out_dir is reused (not re-copied). Returns the copied destinations."""
+    lay = paths.layout
+    real = RunLayout(settings.paths.base_data, lay.sub, lay.day, lay.run, incoming_root=None, ap_block=lay.ap_block, pa_block=lay.pa_block)
+    if not real.day_root.exists():
+        raise SimulationError(f"replay: no prepared data for sub-{lay.sub}/{lay.day} under {settings.paths.base_data}")
+    copied = []
+    wanted = [rel.format(day=lay.day) for rel in REPLAY_PREPARED_DIRS]
+    if settings.decoder.reference_score_run:
+        wanted.append(f"{lay.day}/func/{settings.decoder.reference_score_run}")
+    for rel in wanted:
+        src, dst = real.subject_root / rel, lay.subject_root / rel
+        if dst.exists():
+            log_.info("[replay] reusing %s", dst)
+            continue
+        if not src.exists():
+            log_.warning("[replay] %s not found in the real tree; skipped", src)
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst, symlinks=False)
+        if rel.endswith("fmap"):
+            _relabel_calibrations(src, dst, log_)
+        copied.append(dst)
+        log_.info("[replay] copied %s -> %s", src, dst)
+    return copied
+
+
+def _relabel_calibrations(real_fmap: Path, copy_fmap: Path, log_=log) -> None:
+    """calibration.json records the absolute path/size/mtime of its AP/PA sources (provenance); a copy
+    would read as stale. Verify each pair against the real tree, then point the copy's manifest at the
+    copied sources (same bytes, same mtime: copytree preserves them)."""
+    from . import calibration
+
+    for manifest in copy_fmap.rglob("calibration.json"):
+        copy_pair = manifest.parent.parent
+        real_pair = real_fmap / copy_pair.relative_to(copy_fmap)
+        calibration.load_calibration(real_pair)        # stale in the real tree -> a real problem, raised as such
+        spec = calibration.calibration_spec(calibration.find_source(copy_pair, "AP"), calibration.find_source(copy_pair, "PA"))
+        manifest.write_text(json.dumps(spec))
+        log_.info("[replay] calibration manifest relabelled: %s", manifest)
 
 
 def simulation_settings(settings: Settings, paths: SimPaths, sim: SimulationConfig) -> Settings:

@@ -280,13 +280,15 @@ def start_session(cfg: SessionConfig, simulate=None) -> Session:
     if simulate is not None:
         from . import simulate as S
 
-        sim_paths = S.resolve_sim_paths(settings, cfg.run, simulate, cfg.ap_block, cfg.pa_block)
+        sim_paths = S.resolve_sim_paths(settings, cfg.run, simulate, cfg.ap_block, cfg.pa_block, sub=cfg.sub, day=cfg.day)
+        real_settings = settings
         settings = S.simulation_settings(settings, sim_paths, simulate)
         layout = sim_paths.layout
         S.reset_run_dir(sim_paths)
         if simulate.level == "scanner":
             if simulate.from_dicoms is not None:
                 S.require_scanner_tools(settings)
+                S.stage_subject_copy(real_settings, sim_paths)      # the real tree is read once, never written
                 items = S.recorded_items(simulate.from_dicoms, simulate.source_run, int(cfg.run), simulate.n_volumes or None)
             else:
                 phantom = S.make_phantom(settings, simulate, sim_paths)

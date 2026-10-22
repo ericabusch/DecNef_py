@@ -272,6 +272,14 @@ A launcher is tested without a scanner by one argument:
   already writing) was lost. The folder is now re-listed right after the
   observer starts (the watcher dedups by scan number). Regression test:
   `test_volume_arriving_during_startup_is_not_lost`.
+- `decnef replay` was broken by the unification with the simulator (it
+  looked for the subject's prepared data under the simulation directory).
+  It now stages a copy of the real subject's `anat/`, `fmap/` (calibration
+  manifest relabelled to the copied sources), `func/trans/` and the reference
+  run into `--out/data`, keeps the real sub/day, and reads the decoder in
+  place; the real tree is never written. Tests: staging unit test and an
+  end-to-end replay of a recorded simulated run that reproduces identical
+  scores.
 
 ## Test record
 

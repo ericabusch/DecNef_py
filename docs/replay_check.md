@@ -87,6 +87,17 @@ decnef replay --config decnef.yaml --sub SUB --day DAY --dicom-dir /path/incomin
 ```
 
 `decnef replay` forces physio and the QC viewer off, like the legacy driver.
+It never writes into the real `paths.base_data`: the subject's prepared data
+(`anat/`, `<day>/fmap/` with its calibration, `<day>/func/trans/`, and the
+reference run's folder if `decoder.reference_score_run` is set) is **copied**
+once into `<out>/data/sub-SUB/DAY/` (reused on later replays into the same
+`--out`), the recorded DICOMs are copied into `<out>/incoming/` one per TR
+with the run field rewritten to `--replay-run`, and the new run's outputs
+land in `<out>/data/sub-SUB/DAY/func/902/`. The decoder is read in place.
+The copied `calibration.json` is relabelled to point at the copied AP/PA
+sources (it records their path/size/mtime as provenance; the real one is
+verified first). Compare against the legacy output with
+`decnef compare /tmp/replay_ref /tmp/replay_new/data/sub-SUB/DAY/func/902`.
 
 ### 4. Compare
 
