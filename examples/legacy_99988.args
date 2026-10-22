@@ -1,0 +1,17 @@
+# python replay_run.py @examples/legacy_99988.args      (the legacy reference for decnef compare)
+# Same data as replay_99988.args, through the old rt_pipeline.py. --base-data is the COPY made by
+# decnef replay, so both drivers see the same prepared data and nothing is written to the real tree.
+# --tr 3.0: the old pipeline loses a volume that arrives during its startup at the real TR.
+# --replay-run must be a run id with no existing folder.
+--driver legacy
+--dicom-dir /home/sin/DecNef_pain_Dec23/realtime/incoming/pain7T/20260923.20260923_99988.MJ
+--run 4
+--tr 3.0
+--sub 99988
+--day 8
+--base-data /SSD2/erica/replay_99988/data
+--replay-run 903
+--out /SSD2/erica/replay_99988/legacy_ref3
+--settings-file minjoo_settings.json
+--decoder-template /SSD2/DecNef_py/decoders/Minjoo/sub-99988_ses-01_face-scene_tscore25_decoder.nii.gz
+--ap-block 2 --pa-block 3

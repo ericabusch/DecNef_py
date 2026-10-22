@@ -157,3 +157,16 @@ def test_incoming_watcher_handles_created_closed_and_moved_events(tmp_path):
     w.on_closed(FileClosedEvent(str(tmp_path / "001_000004_000002.dcm")))          # duplicate: ignored
     w.on_moved(FileMovedEvent(str(tmp_path / "a"), str(tmp_path / "001_000005_000001.dcm")))   # other run: ignored
     assert w.next_pending()[0] == 1 and w.next_pending()[0] == 2 and w.next_pending() is None
+
+
+def test_cli_reads_arguments_from_a_file(tmp_path):
+    from decnef.cli import build_parser
+
+    f = tmp_path / "r.args"
+    f.write_text("# a comment\n--config configs/minjoo.yaml\n--sub 99988 --day 8   # trailing comment\n--ap-block 2 --pa-block 3\n"
+                 "--set 'decoder.template=/p/with space/d.nii'\n--dicom-dir /d --run 4 --replay-run 902 --out /o\n")
+    a = build_parser().parse_args(["replay", f"@{f}", "--max-volumes", "40"])
+    assert (a.sub, a.day, a.ap_block, a.pa_block, a.run, a.replay_run, a.max_volumes) == ("99988", "8", 2, 3, 4, 902, 40)
+    assert a.overrides == ["decoder.template=/p/with space/d.nii"] and str(a.out) == "/o"
+    b = build_parser().parse_args(["replay", f"@{f}", "--replay-run", "905"])       # later flags override the file
+    assert b.replay_run == 905

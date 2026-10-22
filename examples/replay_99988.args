@@ -1,0 +1,14 @@
+# decnef replay @examples/replay_99988.args            (append flags to override, e.g. --max-volumes 40 --tr 3.0)
+# The subject/run of the 2026-10-22 equivalence check; copy and edit for another run.
+# Values come from the original run's session_metadata.json (incoming_root, decoder_template)
+# and the fmap/ pair folders (the pair acquired just before the run).
+--config configs/minjoo.yaml
+--sub 99988
+--day 8
+--ap-block 2 --pa-block 3
+--set decoder.template=/SSD2/DecNef_py/decoders/Minjoo/sub-99988_ses-01_face-scene_tscore25_decoder.nii.gz
+--dicom-dir /home/sin/DecNef_pain_Dec23/realtime/incoming/pain7T/20260923.20260923_99988.MJ
+--run 4
+--replay-run 902
+--out /SSD2/erica/replay_99988
+--tr 1.0

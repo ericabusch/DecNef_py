@@ -122,6 +122,17 @@ changes; otherwise the reference is the legacy driver of step 2 run on the
 same copied data. Compare against the legacy output with
 `decnef compare /tmp/replay_ref /tmp/replay_new/data/sub-SUB/DAY/func/902`.
 
+### Argument files (no copy-pasting)
+
+Every `decnef` subcommand and `replay_run.py` accept `@file`: one or more
+arguments per line, `#` comments, later flags override. The two runs above
+are in `examples/replay_99988.args` and `examples/legacy_99988.args`:
+
+```bash
+python replay_run.py @examples/legacy_99988.args
+decnef replay @examples/replay_99988.args --max-volumes 40
+```
+
 ### 4. Compare
 
 ```bash

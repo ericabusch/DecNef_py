@@ -126,6 +126,20 @@ def cmd_replay(a) -> int:
 IGNORE_COLUMNS = {"timestamp", "analysis_timestamp", "watchdog_timestamp"}
 
 
+ARGFILE_HELP = """
+
+Arguments can come from a file: `decnef replay @my_replay.args`. One or more
+arguments per line, shell-style (quotes allowed), `#` starts a comment; extra
+arguments after the @file override it.
+"""
+
+
+class ArgFileParser(argparse.ArgumentParser):
+    def convert_arg_line_to_args(self, line: str):
+        import shlex
+        return shlex.split(line, comments=True)
+
+
 def cmd_calibrate(a) -> int:
     """`decnef calibrate`: the fieldmap-only part of the offline preparation, in the real tree."""
     from .calibration import build_native_calibration, native_paths
@@ -223,7 +237,8 @@ def cmd_config_show(a) -> int:
 
 # ----------------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="decnef", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = ArgFileParser(prog="decnef", description=__doc__ + ARGFILE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter,
+                      fromfile_prefix_chars="@")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="run the real-time pipeline (no display) for one run")

@@ -75,7 +75,9 @@ def _legacy_pipeline_main(cfg, score_queue, settings):
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    from decnef.cli import ArgFileParser   # `python replay_run.py @legacy.args`: arguments from a file, like the decnef CLI
+
+    p = ArgFileParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, fromfile_prefix_chars="@")
     p.add_argument("--dicom-dir", type=Path, required=True, help="folder with the recorded run's DICOMs")
     p.add_argument("--run", type=int, required=True, help="run field of the recorded DICOM names")
     p.add_argument("--replay-run", type=int, required=True, help="new run id to write into (fresh func/<run> folder)")
