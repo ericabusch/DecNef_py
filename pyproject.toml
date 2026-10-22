@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "decnef"
 version = "0.1.0"
 description = "Real-time fMRI decoded neurofeedback (DecNef) pipeline"
-readme = "readme.txt"
+readme = "README.md"
 requires-python = ">=3.10"
 # Core runtime dependencies. torch, PyQt5, pyserial, pandas and matplotlib are
 # core (not extras) because fmri_rt_preproc/RTPSpy_tools/rtp_common.py,

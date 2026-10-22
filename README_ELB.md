@@ -2,7 +2,7 @@
 
 This file tracks what I (ELB) am changing in this fork of
 [K-Demin/DecNef_py](https://github.com/K-Demin/DecNef_py) and why. The
-upstream `readme.txt` documents the pipeline itself; this file documents the
+original `readme_old.txt` documents the offline preparation and the old settings keys; this file documents the
 packaging/cleanup work, the decisions behind it, and what is still open.
 The phase plan is in `CLAUDE.md`.
 
@@ -47,7 +47,7 @@ The phase plan is in `CLAUDE.md`.
 - Not dependencies: `rtpspy` (only in `__main__` self-test blocks; vendored copies
   are used), `EPI_MRI` (vendored PyHySCO via `sys.path`), the BIOPAC `mpdev.dll`
   (ctypes, Windows). ANTs, FSL, FreeSurfer (SynthStrip, SynthMorph, FastSurfer),
-  AFNI, dcm2niix and SPM/MATLAB are subprocess CLIs, documented in `readme.txt`.
+  AFNI, dcm2niix and SPM/MATLAB are subprocess CLIs, documented in `readme_old.txt`.
 
 ## Files not needed to run the package
 

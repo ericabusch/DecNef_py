@@ -16,7 +16,7 @@ motion_rt.1D to --out. Compare two such folders with compare_scores.py.
 
 --driver legacy: pipeline child started the way the old launchers did (no stop
 event, terminate() at the end). --driver session: through rt_session.start_session.
-Needs dcm2niix and the offline preparation for that subject/day (see readme.txt).
+Needs dcm2niix and the offline preparation for that subject/day (see readme_old.txt).
 """
 from __future__ import annotations
 

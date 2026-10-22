@@ -198,5 +198,5 @@ the personal settings JSONs (`decnef config migrate` converts the ones to keep),
 
 ### Folded into `docs/`
 
-`readme.txt` (preparation, data layout, config.json sections), `PLAN.md`,
+`readme_old.txt` (preparation, data layout, config.json sections), `PLAN.md`,
 `docs/parallel_compute_commit_design.md`, `docs/unwarp_before_mc.md`.
