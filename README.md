@@ -32,7 +32,8 @@ src/decnef/
   masks.py, smoothing.py, resampler.py, unwarp.py, viewer.py, outputs.py, events.py, tools.py
   rtpspy/         vendored RTPSpy volreg / regress (+ librtp)
   display.py      optional PsychoPy helpers (window, trigger, stop keys)
-  cli.py          decnef run | simulate | replay | compare | calibrate | config
+  prepare.py      EPI-space preparation without a T1 (phantom / pilot)
+  cli.py          decnef run | simulate | replay | compare | prepare-epi | calibrate | config
 examples/nf_events_launcher.py     a complete paradigm on the session API (--simulate for dry runs)
 examples/*.args                    argument files for the equivalence check
 configs/*.yaml                     the lab's settings files, migrated (configs/README.md)
@@ -102,6 +103,12 @@ decnef calibrate --config configs/minjoo.yaml --sub 99988 --day 8 --ap-block 2 -
 
 The fieldmap pair is the AP/PA series acquired just before the run
 (`fmap/pair-ap002_pa003` → `--ap-block 2 --pa-block 3`).
+
+**Phantom or pilot without a T1** (EPI space): `decnef prepare-epi` builds
+the fieldmap pair + calibration, a reference EPI and mask from a transfer run,
+and a stand-in decoder, from the incoming folder alone — the step-by-step
+procedure for a live scanner test is `docs/sop_phantom_scan.md`
+(`configs/phantom.yaml`).
 
 ### 4.2 Run
 
@@ -272,6 +279,7 @@ Per-phase test record: `README_ELB.md`.
 | `docs/session_api.md` | `start_session`, `ScoreEvent`, stages, extra processes, simulation |
 | `docs/architecture.md` | processes, run start, per-volume stages, output columns, engine |
 | `docs/replay_check.md` | the equivalence recipe, pitfalls, what is removed afterwards |
+| `docs/sop_phantom_scan.md` | standard operating procedure for a live phantom scan with `decnef run` |
 | `configs/README.md` | the lab's migrated settings files |
 | `README_ELB.md` | cleanup log: decisions, bugs, test record |
 | `readme_old.txt` | the original README (offline preparation, settings keys) |

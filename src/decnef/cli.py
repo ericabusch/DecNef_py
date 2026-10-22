@@ -140,6 +140,25 @@ class ArgFileParser(argparse.ArgumentParser):
         return shlex.split(line, comments=True)
 
 
+def cmd_prepare_epi(a) -> int:
+    """`decnef prepare-epi`: EPI-space prerequisites for a phantom or pilot subject."""
+    from .layout import RunLayout
+    from .prepare import prepare_epi
+
+    _logging(a.verbose)
+    if a.ap_block is None or a.pa_block is None:
+        raise SystemExit("prepare-epi needs --ap-block and --pa-block (the fieldmap series numbers)")
+    settings = load_settings(a.config, a.overrides)
+    layout = RunLayout(settings.paths.base_data, a.sub, a.day, "0", a.incoming, a.ap_block, a.pa_block)
+    out = prepare_epi(settings, layout, a.incoming, a.ap_block, a.pa_block, a.epi_block, keep=tuple(a.keep),
+                      mask_threshold=a.mask_threshold, decoder=a.decoder, max_iter=a.max_iter, log_=log)
+    print(json.dumps({k: (str(v) if v is not None else None) for k, v in out.items()}, indent=2))
+    if out["decoder"] is not None:
+        print(f"\nnext: decnef run --config {a.config} --sub {a.sub} --day {a.day} --ap-block {a.ap_block} --pa-block {a.pa_block} "
+              f"--incoming {a.incoming} --run <NF series> --set decoder.template={out['decoder']}")
+    return 0
+
+
 def cmd_calibrate(a) -> int:
     """`decnef calibrate`: the fieldmap-only part of the offline preparation, in the real tree."""
     from .calibration import build_native_calibration, native_paths
@@ -283,6 +302,17 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--rtol", type=float, default=0.0)
     c.add_argument("--atol", type=float, default=0.0)
     c.set_defaults(func=cmd_compare)
+
+    pe = sub.add_parser("prepare-epi", help="EPI-space preparation without a T1 (phantom / pilot): fieldmap pair + calibration, "
+                                            "reference EPI from a transfer run, mask, optional stand-in decoder")
+    _common(pe)
+    pe.add_argument("--incoming", type=Path, required=True, help="the session's incoming DICOM folder")
+    pe.add_argument("--epi-block", type=int, required=True, help="series number of the transfer EPI run")
+    pe.add_argument("--keep", type=int, nargs=2, default=(11, 30), metavar=("FIRST", "LAST"), help="transfer scans to use (default 11 30)")
+    pe.add_argument("--mask-threshold", type=float, default=0.5, help="mask = mean > threshold x 98th percentile")
+    pe.add_argument("--decoder", choices=["random", "none"], default="random", help="write func/trans/phantom_decoder.nii")
+    pe.add_argument("--max-iter", type=int, default=50, help="PyHySCO iterations")
+    pe.set_defaults(func=cmd_prepare_epi)
 
     cb = sub.add_parser("calibrate", help="build the native fieldmap calibration (native_unwarp_v1/) for a subject/day's AP/PA pair")
     _common(cb)

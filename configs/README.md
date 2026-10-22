@@ -37,3 +37,6 @@ Note `rt.yaml` is the only one with `physio.enable: true`; the launchers used
 to override that from their `--biopac-enable` flag (default off), so a run
 with `rt.yaml` now needs `--set physio.enable=false` unless BIOPAC is really
 connected.
+
+`phantom.yaml`: EPI space, physio off, no WM/ventricle regressors, decoder from
+`decnef prepare-epi` - for the live phantom test (`docs/sop_phantom_scan.md`).

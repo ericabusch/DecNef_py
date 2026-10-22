@@ -1,0 +1,78 @@
+# Phantom / pilot config: EPI space, no T1, no physio, no WM/ventricle regressors (no segmentation).
+# Prepared with `decnef prepare-epi` (docs/sop_phantom_scan.md). Everything else as the lab's rt.yaml.
+paths:
+  base_data: /SSD2/erica/phantom_data          # a folder of your own, never the lab's /SSD2/DecNef_py/data
+  incoming_root: null                          # pass --incoming on the command line (changes per session)
+pipeline:
+  TR: 1.0
+  analysis_space: epi                          # the reference EPI grid; no T1/MNI transforms needed
+  voxel_norm_ref_volumes: 30
+  skip_first_trs: 10
+  smoothing_fwhm_mm: 0.0
+  motion:
+    enable_regression: true
+    mot_reg: mot6
+    max_poly_order: inf
+    brain_radius_mm: 50.0
+    volreg_mode: heptic
+  censor:
+    fd:
+      enable: true
+      thr: 0.3
+    dvars:
+      enable: true
+      thr_robust_z: 3.0
+      warmup: 20
+      mask_source: ref_mask
+    plus1: true
+  nuisance:
+    use_gs: false
+    use_wm: false                              # no FastSurfer segmentation for a phantom
+    use_vent: false
+  mask:
+    analysis_mask: whole_brain
+    file: null
+    space: final
+  fieldmap:
+    method: pyhysco
+    epi_phase_encoding: PA
+    preloaded: true
+    device: cuda
+    backend: grid_sample
+    save_intermediate_unwarped: true
+  resampler:
+    use_gpu: true
+    device: cuda
+  engine:
+    max_workers: 6
+    commit_wait_timeout_s: 1.0
+    max_retries: 3
+    rt_max_scan_length: 2000
+  truncate_t1_to_epi_fov: false
+  truncate_t1_padding_vox: 2
+decoder:
+  template: /SSD2/erica/phantom_data/sub-phantom/1/func/trans/phantom_decoder.nii   # written by prepare-epi (--decoder random)
+  roi_txt: null
+  reference_score_run: null
+  enable_scoring: true                         # false -> the pipeline emits `tick` events and needs no decoder
+  enable_original_score: false
+physio:
+  enable: false                                # BIOPAC off for the phantom
+  host: 0.0.0.0
+  port: 15000
+  timeout: 0.3
+  phys_reg: RICOR8
+  handshake: true
+  start_online_only: false
+  mode: tcp
+  file: null
+  poll_interval: 0.05
+  listener: false
+  timelag: false
+qc:
+  volume_viewer: true                          # live matplotlib view of the latest corrected volume
+  stream_kind: mc
+  every_n: 1
+  max_queue: 2
+  window_title: phantom QC
+stages: null
