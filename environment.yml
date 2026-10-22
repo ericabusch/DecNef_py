@@ -1,12 +1,12 @@
-# Development environment for DecNef_py.
+# Development environment for DecNef_py erica's branch (in dev).
 #
 #   conda env create -f environment.yml
-#   conda activate decnef
+#   conda activate decnef_elb
 #   pip install -e . --no-deps        # editable install of this repo; --no-deps keeps conda's packages
 #
 # Everything here is also declared in pyproject.toml (keep the two in sync).
 # Versions are lower bounds; a lock file comes later.
-name: decnef
+name: decnef_elb
 channels:
   - conda-forge
 dependencies:
