@@ -266,6 +266,12 @@ A launcher is tested without a scanner by one argument:
   scanner output (created/closed events) was never affected. The `decnef
   simulate` consumer and the level-2 test now time out on a silent pipeline
   instead of hanging.
+- Second Linux finding: `run_pipeline` listed the incoming folder, then spent
+  seconds in `build_state`, then armed the watcher - a volume landing in that
+  gap (volume 1 of a simulation; or a real run launched while the scanner is
+  already writing) was lost. The folder is now re-listed right after the
+  observer starts (the watcher dedups by scan number). Regression test:
+  `test_volume_arriving_during_startup_is_not_lost`.
 
 ## Test record
 

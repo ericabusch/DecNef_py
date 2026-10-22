@@ -135,3 +135,45 @@ def test_viewer_process_starts_publishes_and_stops(monkeypatch, tmp_path):
     assert not alive
     disabled = ViewerHandle(ViewerConfig(enabled=False))
     disabled.start(); disabled.publish(1, vol); disabled.stop()
+
+
+@needs_librtp
+def test_volume_arriving_during_startup_is_not_lost(tmp_path, monkeypatch):
+    """A DICOM that lands after the initial folder listing but before the watcher is armed (build_state
+    takes seconds) must still be processed. Seen on the scanner machine: volume 1 vanished."""
+    import queue
+    import threading
+
+    synth.install_dcm2niix_stub(tmp_path, monkeypatch)
+    from decnef import pipeline as P
+    from decnef.layout import RunLayout
+
+    lay, decoder, vols = synth.make_subject(tmp_path)
+    synth.stage_run(lay, "907", vols, incoming=False)
+    from decnef.config import from_dict
+
+    settings = from_dict(synth.new_settings(lay, decoder))
+    lay_new = RunLayout(lay.base_data, "99", "1", "907", incoming_root=lay.incoming_root)
+    real_build_state = P.build_state
+
+    def build_state_with_arrival(*a, **k):
+        synth.drop_dicoms(lay, "907", [1])                  # lands in the gap
+        return real_build_state(*a, **k)
+
+    monkeypatch.setattr(P, "build_state", build_state_with_arrival)
+    q, stop = queue.Queue(), threading.Event()
+    t = threading.Thread(target=P.run_pipeline, args=(settings, lay_new, q, stop), daemon=True)
+    t.start()
+    seen, deadline = [], time.time() + 120
+    while len(seen) < 3 and time.time() < deadline:
+        try:
+            m = q.get(timeout=0.2)
+        except queue.Empty:
+            continue
+        if m.get("kind") == "score":
+            seen.append(m["volume_idx"])
+            if seen == [1]:
+                synth.drop_dicoms(lay, "907", [2, 3])        # online arrivals via the observer
+    stop.set()
+    t.join(timeout=30)
+    assert seen == [1, 2, 3]

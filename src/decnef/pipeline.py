@@ -290,6 +290,9 @@ def run_pipeline(settings: Settings, layout: RunLayout, score_queue=None, stop_e
     observer = Observer()
     observer.schedule(watcher, str(layout.incoming_root), recursive=False)
     observer.start()
+    # re-list now that the observer is armed: files that landed while build_state ran (seconds) were
+    # neither in the first listing nor seen by the observer. The watcher dedups by scan number.
+    existing = list_run_dicoms(layout.incoming_root, int(layout.run))
 
     def pump() -> bool:
         moved = False
