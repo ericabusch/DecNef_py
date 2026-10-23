@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import csv
 import logging
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -35,17 +37,57 @@ def release_mouse(win) -> None:
                 log.warning("could not release exclusive mouse control: %s", exc)
 
 
-def build_window(visual, color, size=(1000, 700), prefer_second_screen: bool = True):
-    """A PsychoPy window: fullscreen on the second screen when there is one, else
-    windowed on the first; falls back to a safe windowed setup if the first attempt fails."""
-    kwargs = {"size": size, "color": color, "units": "pix", "screen": 0, "fullscr": False}
-    if prefer_second_screen:
-        try:
-            import pyglet
+def list_screens() -> list:
+    """[(x, y, width, height)] of the attached screens as pyglet sees them (index = PsychoPy `screen`)."""
+    import pyglet
 
-            screens = pyglet.canvas.get_display().get_screens()
-            if len(screens) > 1:
-                kwargs.update({"size": (screens[1].width, screens[1].height), "screen": 1, "fullscr": True})
+    return [(int(sc.x), int(sc.y), int(sc.width), int(sc.height)) for sc in pyglet.canvas.get_display().get_screens()]
+
+
+def window_kwargs(screens: list, color, size=(1000, 700), prefer_second_screen: bool = True,
+                  screen: Optional[int] = None, borderless: Optional[bool] = None, platform: str = sys.platform) -> dict:
+    """PsychoPy `Window` arguments for the chosen screen.
+
+    `screen` picks a screen index explicitly; otherwise the second screen is used when
+    `prefer_second_screen` and one exists, else the first. A window on a non-primary screen
+    (or an explicit `screen`) fills that screen. On Linux a fullscreen window asked for on
+    screen 1 is placed on the primary screen by pyglet/X11, so there the window is created
+    borderless at the screen's own offset and size instead (`borderless=None` = Linux only)."""
+    base = {"size": tuple(size), "color": color, "units": "pix", "screen": 0, "fullscr": False}
+    if screen is None:
+        idx = 1 if (prefer_second_screen and len(screens) > 1) else 0
+        if prefer_second_screen and len(screens) < 2:
+            log.warning("one screen found (%s); fullscreen on a second screen is not possible, using a %sx%s window",
+                        screens, size[0], size[1])
+    else:
+        idx = int(screen)
+        if not 0 <= idx < len(screens):
+            raise ValueError(f"screen {idx} requested but only {len(screens)} screen(s) found: {screens}")
+    if idx == 0 and screen is None:
+        return base
+    x, y, w, h = screens[idx]
+    if borderless is None:
+        borderless = platform.startswith("linux")
+    if borderless:
+        return {**base, "size": (w, h), "pos": (x, y), "screen": idx, "fullscr": False, "allowGUI": False}
+    return {**base, "size": (w, h), "screen": idx, "fullscr": True}
+
+
+def build_window(visual, color, size=(1000, 700), prefer_second_screen: bool = True,
+                 screen: Optional[int] = None, borderless: Optional[bool] = None):
+    """A PsychoPy window: fullscreen on the second screen when there is one (or on `screen`),
+    else windowed on the first; falls back to a safe windowed setup if the first attempt fails.
+    See `window_kwargs` for how the screen is chosen; the screens found and the choice are logged."""
+    kwargs = {"size": size, "color": color, "units": "pix", "screen": 0, "fullscr": False}
+    if prefer_second_screen or screen is not None:
+        try:
+            screens = list_screens()
+            kwargs = window_kwargs(screens, color, size, prefer_second_screen, screen, borderless)
+            log.info("screens %s -> window on screen %d: %s", screens, kwargs["screen"],
+                     {k: v for k, v in kwargs.items() if k in ("size", "pos", "fullscr")})
+            if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" and kwargs["screen"] > 0:
+                log.warning("Wayland session: the compositor may ignore the window position and put the window "
+                            "on the primary screen; log in with 'Ubuntu on Xorg' for the projector")
         except Exception as exc:
             log.warning("could not detect a second screen; using the default window: %s", exc)
     try:
