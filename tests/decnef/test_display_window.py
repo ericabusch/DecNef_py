@@ -1,7 +1,7 @@
 """decnef.display.window_kwargs: which screen the launcher window goes to, and how (no PsychoPy needed)."""
 import pytest
 
-from decnef.display import window_kwargs
+from decnef.display import parse_xrandr_monitors, window_kwargs
 
 ONE = [(0, 0, 1920, 1080)]
 TWO = [(0, 0, 1920, 1080), (1920, 0, 1920, 1200)]
@@ -20,8 +20,11 @@ def test_second_screen_fullscreen_on_mac_and_windows():
 
 def test_second_screen_is_borderless_at_its_offset_on_linux():
     kw = window_kwargs(TWO, color=[0, 0, 0], prefer_second_screen=True, platform="linux")
-    assert kw == {"size": (1920, 1200), "pos": (1920, 0), "color": [0, 0, 0], "units": "pix", "screen": 1,
+    # screen 0 + absolute pos: PsychoPy adds the pyglet screen's offset to pos, and pyglet may see one screen
+    assert kw == {"size": (1920, 1200), "pos": (1920, 0), "color": [0, 0, 0], "units": "pix", "screen": 0,
                   "fullscr": False, "allowGUI": False}
+    shifted = [(100, 50, 1920, 1080), (2020, 50, 1920, 1200)]
+    assert window_kwargs(shifted, color=[0, 0, 0], prefer_second_screen=True, platform="linux")["pos"] == (1920, 0)
     assert window_kwargs(TWO, color=[0, 0, 0], prefer_second_screen=True, platform="linux", borderless=False)["fullscr"] is True
 
 
@@ -37,3 +40,11 @@ def test_explicit_screen_wins_and_is_checked():
 def test_prefer_second_screen_false_stays_windowed():
     kw = window_kwargs(TWO, color=[0, 0, 0], size=(800, 600), prefer_second_screen=False, platform="linux")
     assert kw["screen"] == 0 and kw["fullscr"] is False and kw["size"] == (800, 600)
+
+
+def test_parse_xrandr_monitors():
+    text = ("Monitors: 2\n"
+            " 0: +*HDMI-0 1920/598x1080/336+0+0  HDMI-0\n"
+            " 1: +DP-3 1920/1638x1200/1024+1920+0  DP-3\n")
+    assert parse_xrandr_monitors(text) == [(0, 0, 1920, 1080), (1920, 0, 1920, 1200)]
+    assert parse_xrandr_monitors("Monitors: 0\n") == []
