@@ -1,18 +1,14 @@
-# `decnef`: what changed, how it fits together, what has been validated
+# `decnef_py` revision: changes & validation
 
 A review document for the clean real-time package (`src/decnef/`) that
-replaces the flat script tree (`rt_pipeline.py` and friends). Written
-2026-10-22, after the real-data equivalence check passed on the lab machine.
+replaces the flat script tree (`rt_pipeline.py` etc). Written
+2026-10-22, after the real-data equivalence check passed on the rt pc.
 Everything here is reproducible from the repository
 (`ericabusch/DecNef_py`, branch `master`); commands are given where useful.
 
-Audience: someone who knows the DecNef pipeline and wants to judge whether the
-package can replace the scripts, and what to add or change before it does.
-Comments welcome on any of the open questions in the last section.
-
 ---
 
-## 1. One-paragraph summary
+## 1. summary
 
 The real-time path (DICOM in → unwarp → motion correction → censoring →
 nuisance regression → T1/MNI transform → mask/smooth → decoder score → event
@@ -20,15 +16,16 @@ to the display) was **moved, not rewritten**: the algorithms are the same code
 (PyHySCO, RtpVolreg/librtp, RtpRegress, the GPU resampler, the decoder), now
 organised as one importable package with one configuration file, one entry
 point for launchers (`start_session`), explicit error handling, no module
-globals and no hard-coded lab paths. On a recorded 7T run the package and the
-original scripts produce **byte-identical** outputs (scores, motion, FD,
-regression status, regressors, every intermediate NIfTI). Two new tools come
-with it: a **simulator** (fake scores, or synthetic scanner output through the
-full pipeline) so launchers can be tested without a scanner, and a
-**replay/compare** workflow for equivalence checks on recorded runs. Three
-bugs in the original scripts were found along the way (section 5).
+globals and no hard-coded lab paths. On an existing 7T run the package and the
+original scripts produce byte-identical outputs (scores, motion, FD,
+regression status, regressors, every intermediate nifti). 
+Two new tools are included: 
+   1. **simulator** (fake scores, or synthetic scanner output through the
+full pipeline) so launchers can be tested without a scanner
+   2. **replay/compare** workflow for equivalence checks on recorded runs. 
+Three bugs in the original scripts were found along the way (section 5).
 
-Size: 6 112 lines of real-time scripts → 5 054 lines of package (of which
+Size: 6,112 lines of real-time scripts → 5,054 lines of package (of which
 ~600 are the simulator, which has no counterpart in the old tree).
 
 ---

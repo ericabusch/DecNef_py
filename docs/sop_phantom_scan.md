@@ -1,6 +1,6 @@
 # SOP — a live phantom scan with `decnef run`
 
-The first test of the package against the real scanner: real DICOM arrival,
+The first test of the package on scanner: real DICOM arrival,
 the scanner's file-writing pattern, the lab machine's GPU, in real time. A
 phantom has no anatomy, so the run is in **EPI space** (no T1, no FastSurfer,
 no WM/ventricle regressors); everything else — DICOM watch, unwarping, motion
@@ -200,3 +200,73 @@ must be identical — same DICOMs, same calibration, same reference.)
 | QC window does not open | no display / Qt backend | `--set qc.volume_viewer=false`; it never affects the run |
 
 Logs: everything is on stderr; `decnef run ... 2>&1 | tee /SSD2/erica/phantom_data/run5.log` keeps a copy.
+
+
+Step 1 — the series listing (ls $INC | cut -d_ -f2 | sort | uniq -c, run after the transfer EPI finishes):
+
+     ```
+     11 000001      localizer
+      4 000002      AP fieldmap     ← --ap-block 2
+      4 000003      PA fieldmap     ← --pa-block 3
+     40 000004      transfer EPI    ← --epi-block 4   (≥ 30 files)
+     ```
+
+Sensible: the two fieldmap series have the same small count (the lab's have 4 files each), the EPI count equals the volumes you asked for, and the numbers are consecutive. A stray series (a scout repeated, an aborted run) just shifts the numbers — use what you see, not what the protocol sheet says.
+
+Step 2 — decnef prepare-epi (~1–2 min):
+
+```
+[PREP] series 2 (4 DICOMs) -> .../sub-phantom/1/fmap/pair-ap002_pa003/AP.nii.gz
+[PREP] series 3 (4 DICOMs) -> .../PA.nii.gz
+[FMAP] AP/PA metadata missing: using legacy voxel phase-encoding axis 2      (expected: the lab's fieldmaps have no sidecar PE field)
+[FMAP] PyHySCO estimation in .../native_unwarp_v1 (max_iter=50)
+Iteration  Loss Value ...
+0          4.0E+08
+...
+reached function value change tolerance        total runtime: 0 min 0.2 sec
+[FMAP] native calibration built: .../native_unwarp_v1
+[PREP] transfer series 4: 20 volumes -> .../func/trans/transfer_raw
+RtpVolreg: Alignment reference = .../transfer_first_unwarped.nii
+[PREP] reference .../epi_unwarped_mean.nii from 20 volumes; mask 6812 voxels
+[PREP] stand-in decoder .../phantom_decoder.nii
+{ "fmap_dir": ..., "reference": ..., "mask": ..., "decoder": ... }
+next: decnef run --config configs/phantom.yaml --sub phantom --day 1 --ap-block 2 --pa-block 3 --incoming ... --run <NF series> --set decoder.template=...
+```
+
+Sensible: PyHySCO loss drops by an order of magnitude and stops after ~10–20 iterations (a phantom has little distortion; a loss that doesn't decrease, or 50 iterations without convergence, means the AP/PA pair is wrong or identical). Mask voxels: a 3 mm phantom of ~15 cm diameter is ~65 000 voxels; a few thousand to tens of thousands is fine, under ~500 or more than half the volume means the threshold is off. motion.1D in func/trans/ should be near zero (phantom).
+
+Step 3 — decnef run, before the series starts:
+```
+[PyHySCO:init] prototype_image_shape=(140, 140, 68) fieldmap_image_shape=(140, 141, 68) ...
+RtpVolreg: Alignment reference = .../func/trans/epi_unwarped_mean.nii[0]
+RtpRegress: Mask = .../func/trans/epi_mask_mean.nii
+[SCORE] decoder: .../phantom_decoder.nii
+[RT] online: watching <INC> for run 
+```
+
+Then silence until the operator starts series 5 — that gap is the "pipeline started before the scanner" condition. From the first DICOM, once per TR:
+```
+[FMAP] vol 00001  (0.01s)
+[MC] vol 00001 FD=NaN (skipped TR) (0.07s)
+[REG] vol 00001 motion (0.36s)                 ← first volume only: RtpRegress initialisation
+[TRANS] vol 00001 skipped (EPI space) (0.00s)
+[SCORE] vol 00001 raw=-6.98e+07 (0.00s)       ← pre-reg_ready scores are meaningless, large, and that's expected
+...
+[MC] vol 00011 FD=0.02 (0.09s)                 ← FD appears after skip_first_trs; phantom: 0.00–0.1
+RtpRegress: #11:Wait until volume #30
+...
+RtpRegress: #30;Regression;vol_00030_mc.nii
+[SCORE] vol 00031 raw=-9.2 (0.00s)             ← from here scores are O(1–1000) and fluctuate around 0
+```
+Sensible: every stage time ≤ 0.1 s (sum ≈ 0.2 s against a 1.0 s TR); volume numbers increase by exactly one each TR with no [COMMIT] volume … failed or error; FD tiny; the QC window redraws each TR; no line of the form vol 000NN appearing more than ~0.3 s after the file landed (the watchdog_timestamp → timestamp gap in scores.csv, checked in step 4). If a volume number is skipped, that is the finding we are there to make — note the time and keep the run going.
+
+Step 4 — the check script on func/5/:
+
+```volumes: 600   reg_ready from: 30
+censored (fd): 0   (dvars): 0–3
+```
+plus `wc -l`: 601 lines in scores.csv/fd_rt.csv, 600 in motion_rt.1D, 600 files in each of raw/ unwarped/ mc/ reg/. A phantom should produce 0 FD censors; a handful of DVARS censors in the first volumes after warm-up is normal (scanner settling). The latency column: timestamp − watchdog_timestamp per volume should sit around 0.15–0.25 s with no upward trend — a trend means the pipeline is falling behind.
+
+And the final pass condition, after the scan: decnef replay of series 5 against the same prepared data produces a scores.csv identical to the live one. That closes the loop: live processing ≡ offline replay ≡ (via the earlier check) the original scripts.
+
+One thing I noticed: docs/sop_phantom_scan.md has a one-line local edit on the scanner-side copy or here — if you changed something on purpose, commit it; if not, git diff docs/sop_phantom_scan.md will show what moved.
