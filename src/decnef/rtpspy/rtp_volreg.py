@@ -40,6 +40,37 @@ except Exception:
     librtp_path = f'./{lib_name}'
 
 
+# librtp.so is linked against libfftw3.so.3, libXt.so.6, libexpat.so.1 and libz.so.1. A server without them installed
+# system-wide fails in LoadLibrary ("libfftw3.so.3: cannot open shared object file"); they are then taken from the active
+# conda environment (`conda install -c conda-forge fftw xorg-libxt expat zlib`) by preloading them from sys.prefix/lib with
+# RTLD_GLOBAL, which the dynamic loader honours without LD_LIBRARY_PATH.
+LIBRTP_LINUX_DEPS = ("libfftw3.so.3", "libXt.so.6", "libexpat.so.1", "libz.so.1")
+
+
+def load_librtp(path=None):
+    path = path or librtp_path
+    try:
+        return ctypes.cdll.LoadLibrary(path)
+    except OSError as first:
+        if sys.platform != 'linux':
+            raise
+        libdir = Path(sys.prefix) / "lib"
+        preloaded = []
+        for name in LIBRTP_LINUX_DEPS:
+            cand = libdir / name
+            if cand.exists():
+                try:
+                    ctypes.CDLL(str(cand), mode=ctypes.RTLD_GLOBAL)
+                    preloaded.append(name)
+                except OSError:
+                    pass
+        try:
+            return ctypes.cdll.LoadLibrary(path)
+        except OSError as second:
+            raise OSError(f"{second} (preloaded {preloaded or 'nothing'} from {libdir}; librtp needs {', '.join(LIBRTP_LINUX_DEPS)}: "
+                          f"conda install -c conda-forge fftw xorg-libxt expat zlib)") from first
+
+
 # %% RtpVolreg ===============================================================
 class RtpVolreg(RTP):
     """
@@ -221,7 +252,7 @@ class RtpVolreg(RTP):
     def setup_libfuncs(self):
         """ Setup library function access """
 
-        librtp = ctypes.cdll.LoadLibrary(librtp_path)
+        librtp = load_librtp(librtp_path)
 
         # -- Define rtp_align_setup --
         self.rtp_align_setup = librtp.rtp_align_setup
