@@ -12,6 +12,7 @@ import numpy as np
 import gzip
 import shutil
 import os
+import sys
 import json
 from fmri_rt_preproc.native_fieldmap import (
     PIPELINE_ORDER, native_paths, calibration_spec, load_calibration,
@@ -289,16 +290,15 @@ class FMRIRealtimePreprocessor:
             if stale.exists():
                 stale.unlink()
         pyhysco_src = Path(__file__).resolve().parent / "PyHySCO-main" / "src"
+        # The interpreter running this pipeline (it has torch); a login shell's `python` need not be it.
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(pyhysco_src) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         cmd = [
-            "bash", "-lc",
-            f"""
-            export PYTHONPATH="{pyhysco_src}:$PYTHONPATH"
-            python "{pyhysco_src / 'scripts' / 'pyhysco.py'}" \
-              "{ap_mean}" "{pa_mean}" {self.pyhysco_phase_encoding_direction} \
-              --output_dir "{pyhysco_prefix}" --max_iter 50 --correction jac
-            """
+            sys.executable, str(pyhysco_src / "scripts" / "pyhysco.py"),
+            str(ap_mean), str(pa_mean), str(self.pyhysco_phase_encoding_direction),
+            "--output_dir", str(pyhysco_prefix), "--max_iter", "50", "--correction", "jac",
         ]
-        run(cmd)
+        run(cmd, env=env)
 
         if not generated_field.exists() and not pyhysco_field.exists():
             raise FileNotFoundError(
@@ -312,7 +312,7 @@ class FMRIRealtimePreprocessor:
         warped = self.fmap_dir / f"{output_prefix_name}Warped.nii"
         inverse_warped = self.fmap_dir / f"{output_prefix_name}InverseWarped.nii"
         cmd = [
-            "bash", "-lc",
+            "bash", "-c",
             # wrap in bash so we can export vars easily
             f"""
             export ANTS_USE_GPU=1
@@ -582,7 +582,7 @@ class FMRIRealtimePreprocessor:
         print("→ Running epi→T1 antsRegistration (global)")
 
         cmd = [
-            "bash", "-lc",
+            "bash", "-c",
             f"""
             export ANTS_USE_GPU=1
             export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=$(nproc)
@@ -706,7 +706,7 @@ class FMRIRealtimePreprocessor:
                 return
 
             cmd = [
-                "bash", "-lc",
+                "bash", "-c",
                 f"""
                 export ANTS_USE_GPU=1
                 export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=$(nproc)
@@ -767,7 +767,7 @@ class FMRIRealtimePreprocessor:
             )
 
         cmd = [
-            "bash", "-lc",
+            "bash", "-c",
             f"""
             export ANTS_USE_GPU=1
             export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=$(nproc)
